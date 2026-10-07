@@ -14,6 +14,25 @@ CompileFlags:
     - -I/home/ros2/rde-ros-2/samples/src/lib_without_ament/include
     - -I/home/ros2/rde-ros-2/samples/src/lifecycle_cpp/include
     - -I/home/ros2/rde-ros-2/samples/src/use_lib_without_ament/include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\launch_examples\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\lib_without_ament\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\lifecycle_cpp\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\msg_interfaces\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\rde_cpp\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\use_lib_without_ament\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\设计\ros2工作包探讨\demo_pkg_cpp\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\设计\ros2工作包探讨\demo_pkg_cpp_only\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\设计\ros2工作包探讨\demo_pkg_mix\include
+    # ---- 工作空间安装产物 include:isolated install/<pkg>/include(在后,-isystem) ----
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\rde_launch_examples\include\rde_launch_examples
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\rde_lib_without_ament\include\rde_lib_without_ament
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\rde_lifecycle_cpp\include\rde_lifecycle_cpp
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\msg_interfaces\include\msg_interfaces
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\rde_cpp\include\rde_cpp
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\rde_use_lib_without_ament\include\rde_use_lib_without_ament
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\demo_pkg_cpp\include\demo_pkg_cpp
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\demo_pkg_cpp_only\include\demo_pkg_cpp_only
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\install\demo_pkg_mix\include\demo_pkg_mix
     # ---- 环境前缀 include:发行版(在后,-isystem) ----
     - -isystem/opt/ros/humble/include/action_msgs
     - -isystem/opt/ros/humble/include/action_tutorials_interfaces
