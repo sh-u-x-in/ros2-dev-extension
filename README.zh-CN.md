@@ -18,6 +18,7 @@
 * **运行与启动** —— `ros2 run` / `ros2 launch` 支持参数预设与按目标记忆,同一命令不同目标互不串档。
 * **测试** —— 集成 VS Code 测试资源管理器:自动发现 C++ gtest 与 Python pytest 测试,支持运行/调试与结果解析。
 * **语言服务** —— `.msg`/`.srv`/`.action` 的补全、悬停、跳转、格式化与诊断;`.xacro`/`.urdf` 的 include 图驱动的跳转、悬浮、补全与 D1-D14 诊断;launch 文件(py/XML/YAML)补全与 include 跳转。
+* **代码片段** —— 内置 Python(rclpy)与 C++(rclcpp)片段:节点、发布/订阅、服务、动作、参数、日志与 launch 文件全覆盖。
 * **智能感知配置** —— 自动维护 cpptools 与 clangd 的 include 路径(可选引擎),合并 `compile_commands.json`。
 * **包创建向导** —— 生成 C++ / Python / 混合包:内置常用依赖选择、命名与保留名校验、launch/资源模板。
 * **创建 ROS 2 终端** —— 预加载 ROS 环境的终端(bash/zsh/fish/pwsh/cmd 均支持),右键目录可快速构建或生成包。
@@ -45,7 +46,7 @@
 
 ## 文档
 
-完整文档(使用 / 教程 / 测试 / 配置 / 智能感知 / 故障排查)见仓库 [docs/ 目录](https://github.com/sh-u-x-in/ros2-dev-extension/tree/main/docs)。
+完整文档(使用 / 教程 / 测试 / 配置 / 智能感知 / 代码片段 / Pixi / 故障排查,英文与简体中文双语)见仓库 [docs/ 目录](https://github.com/sh-u-x-in/ros2-dev-extension/tree/main/docs)。
 
 ## 支持
 

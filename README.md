@@ -18,6 +18,7 @@ A Visual Studio Code extension supporting [Robot Operating System 2 (ROS 2)](htt
 * **Run & launch** — `ros2 run` / `ros2 launch` with argument presets and per-target memory; targets never cross-contaminate.
 * **Testing** — Integrated with the VS Code Test Explorer: discovers C++ gtest and Python pytest tests automatically, with run/debug and result parsing.
 * **Language services** — Completion, hover, definition, formatting and diagnostics for `.msg`/`.srv`/`.action`; include-graph-driven navigation, hover, completion and D1-D14 diagnostics for `.xacro`/`.urdf`; launch files (py/XML/YAML) completion and include navigation.
+* **Code snippets** — Curated Python (rclpy) and C++ (rclcpp) snippets covering nodes, publishers/subscribers, services, actions, parameters, logging and launch files.
 * **IntelliSense configuration** — Automatically maintains include paths for cpptools and clangd (selectable engine) and merges `compile_commands.json`.
 * **Package creation wizard** — Generates C++ / Python / mixed packages: built-in dependency picker, naming and reserved-name validation, launch/resource templates.
 * **ROS 2 terminal** — Creates terminals with the ROS environment pre-loaded (bash/zsh/fish/pwsh/cmd all supported); right-click a folder to build or scaffold quickly.
@@ -45,7 +46,7 @@ Key settings (see [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-
 
 ## Documentation
 
-Full documentation (usage / tutorials / testing / configuration / IntelliSense / troubleshooting) lives in the repository [docs/ directory](https://github.com/sh-u-x-in/ros2-dev-extension/tree/main/docs).
+Full documentation (usage / tutorials / testing / configuration / IntelliSense / snippets / pixi / troubleshooting — in English and Simplified Chinese) lives in the repository [docs/ directory](https://github.com/sh-u-x-in/ros2-dev-extension/tree/main/docs).
 
 ## Support
 

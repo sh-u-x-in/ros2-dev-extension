@@ -13,14 +13,15 @@
 | 命令 | 说明 |
 |---|:---|
 | ROS2: 创建终端 | 创建预加载 ROS 环境的终端。 |
-| ROS2: 打开 ROS 2 状态页 | 打开状态页(节点 / 话题 / 服务 / 参数 / 生命周期)。 |
+| ROS2: 打开 ROS 2 状态页(服务/话题/参数监控) | 打开状态页(节点 / 话题 / 服务 / 参数 / 生命周期)。 |
 | ROS2: 运行 ROS 可执行文件 (ros2 run) | 选包选可执行,支持参数预设与按目标记忆。 |
 | ROS2: 运行 ROS 启动文件 (ros2 launch) | 选启动文件,支持参数预设与按目标记忆。 |
 | ROS2: 构建 ROS 2 包 | 智能构建:多选包,再选额外参数预设。 |
 | ROS2: 重新生成智能感知配置(补写) | 重新同步 cpptools / clangd 的 include 路径与 compile_commands.json。 |
 | ROS2: 使用 rosdep 安装此工作区的 ROS 依赖 | 等价于 `rosdep install --from-paths src --ignore-src -r -y`。 |
 | ROS2: 运行 ROS 2 Doctor 诊断 | 在 ROS 终端执行 `ros2 doctor`。 |
-| ROS2: 刷新测试发现 / 运行所有测试 | 驱动[测试资源管理器](test-explorer.md)。 |
+| ROS2: 刷新测试发现 | 刷新[测试资源管理器](test-explorer.md)的发现结果。 |
+| ROS2: 运行整个工作空间的测试 (colcon test) | 经 `colcon test` 运行所有包的测试。 |
 | ROS2: 显示入门指南 | 打开入门演练。 |
 
 资源管理器中右键文件夹可**切换 Colcon 忽略**、**Colcon 构建(Release/Debug)** 与三个**创建包**向导(C++ / Python / 混合,内置依赖选择与命名校验)。
