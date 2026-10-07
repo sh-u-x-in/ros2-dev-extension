@@ -25,7 +25,9 @@ Requirements: Node.js (>= 20) and npm; running the tests the first time needs ne
 
 ### Code layout
 
-Every directory under `src/` has a README.md (purpose / file table / boundaries / change log) — **read the matching README before changing code**. `设计/` (design) and `知识/` (knowledge) hold design drafts and measured facts, which are the source of truth for many criteria.
+Every directory under `src/` has a README.md (purpose / file table / boundaries / change log) — **read the matching README before changing code**. It is the primary documentation for that module.
+
+> **A note on historical references:** the change-log tables inside module READMEs occasionally point to internal documents (e.g. `设计/`, `知识/`, `问题/`, `手工重设计/`, `discover/`) that live in the author's **private development repository** and are **not published in this repository**. Treat them as historical pointers only — the authoritative in-repo documentation is the READMEs themselves plus the `docs/` site.
 
 ### Conventions
 
