@@ -16,7 +16,7 @@ All settings registered by the extension live under the `ROS2` section: 22 keys 
 
 | Setting | Description |
 |---|---|
-| ROS2.build.symlinkInstall | Install method: on = symlink install (artifacts link back to source); off = copy install. Always copy on Windows |
+| ROS2.build.installMethod | Install method, three values: auto (platform default: copy on Windows / symlink elsewhere) / symlink / copy (explicit value takes precedence over the platform default) |
 | ROS2.build.installLayout | Install layout: auto (platform default: merged on Windows / isolated elsewhere) / merged (--merge-install) / isolated (colcon default) |
 | ROS2.build.shareSpec | Build command template mechanism (template + custom + argv_list) |
 | ROS2.build.preflightWarnings | Pre-build warning mode: on / off / ignore-silent-noop |

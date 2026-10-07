@@ -23,6 +23,23 @@ jobs:
           # 与本地同步纪律同一份剔除清单(内部中文库/工具/AI 会话档)
           rm -rf 设计 知识 问题 工作交接 手工重设计 文案普查 discover .zcode scripts .zcodeignore
 
+      - name: Remove non-ASCII-named files (release tree is ASCII-only)
+        run: |
+          # 发布树文件名全 ASCII(用户裁定):开发仓保留中文命名文档,同步时在此剥离,
+          # 开发仓内容不受任何影响。先删文件再删因此空掉的目录。
+          python3 - <<'PY'
+          import os
+          root = "/tmp/export"
+          hits = []
+          for dirpath, dirnames, filenames in os.walk(root):
+              for n in dirnames + filenames:
+                  if any(ord(c) > 127 for c in n):
+                      hits.append(os.path.join(dirpath, n))
+          for p in sorted(hits, key=len, reverse=True):
+              (os.remove if os.path.isfile(p) else os.rmdir)(p)
+          print("\n".join(os.path.relpath(p, root) for p in hits) or "none")
+          PY
+
       - name: Install release workflows
         run: |
           # 发布仓的 CI/发布工作流由本仓单源维护(.github/release/),随同步安装
