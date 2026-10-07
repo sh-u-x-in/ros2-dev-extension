@@ -1,0 +1,1014 @@
+{
+    "name": "ros2-dev-extension",
+    "version": "0.0.1",
+    "publisher": "sh-u-x-in",
+    "engines": {
+        "vscode": "^1.101.0"
+    },
+    "extensionDependencies": [
+        "ms-vscode.cpptools",
+        "ms-python.python"
+    ],
+    "author": {
+        "name": "sh-u-x-in",
+        "url": "https://github.com/sh-u-x-in"
+    },
+    "displayName": "%displayName%",
+    "description": "%extension.description%",
+    "icon": "media/icon.png",
+    "categories": [
+        "Programming Languages",
+        "Snippets",
+        "Testing"
+    ],
+    "galleryBanner": {
+        "color": "#123A5F",
+        "theme": "dark"
+    },
+    "capabilities": {
+        "untrustedWorkspaces": {
+            "supported": false,
+            "description": "%extension.untrustedWorkspace.description%"
+        }
+    },
+    "keywords": [
+        "ros",
+        "ros2",
+        "robot",
+        "robotics",
+        "colcon",
+        "robot operating system",
+        "xacro",
+        "urdf"
+    ],
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/sh-u-x-in/ros2-dev-extension"
+    },
+    "bugs": {
+        "url": "https://github.com/sh-u-x-in/ros2-dev-extension/issues"
+    },
+    "main": "./dist/extension",
+    "l10n": "./l10n",
+    "activationEvents": [
+        "onLanguage:cpp",
+        "onLanguage:python",
+        "onLanguage:csharp",
+        "workspaceContains:**/package.xml",
+        "workspaceContains:**/test_*.py",
+        "workspaceContains:**/*_test.py",
+        "workspaceContains:**/*Test.cpp",
+        "workspaceContains:**/test_*.launch.py",
+        "onWebviewPanel:ros2Status"
+    ],
+    "contributes": {
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "ros2-packages",
+                    "title": "%viewsContainers.activitybar.title%",
+                    "icon": "media/ros2-packages.svg"
+                }
+            ]
+        },
+        "views": {
+            "ros2-packages": [
+                {
+                    "id": "ros2.installTruth",
+                    "name": "%views.installTruth.name%",
+                    "icon": "media/ros2-packages.svg",
+                    "contextualTitle": "%views.installTruth.contextualTitle%",
+                    "when": "ros2.hasPackageXml"
+                }
+            ]
+        },
+        "configurationDefaults": {
+            "[rosmsg]": {
+                "editor.formatOnSave": false,
+                "editor.semanticHighlighting.enabled": false
+            },
+            "editor.tokenColorCustomizations": {
+                "textMateRules": [
+                    {
+                        "scope": "support.namespace.rosmsg",
+                        "settings": {
+                            "foreground": "#C586C0"
+                        }
+                    },
+                    {
+                        "scope": "punctuation.separator.rosmsg",
+                        "settings": {
+                            "foreground": "#C586C0"
+                        }
+                    },
+                    {
+                        "scope": "support.type.rosmsg",
+                        "settings": {
+                            "foreground": "#4EC9B0"
+                        }
+                    },
+                    {
+                        "scope": "storage.type.rosmsg",
+                        "settings": {
+                            "foreground": "#CE9178"
+                        }
+                    },
+                    {
+                        "scope": "variable.other.field.rosmsg",
+                        "settings": {
+                            "foreground": "#8FBED6"
+                        }
+                    },
+                    {
+                        "scope": "storage.modifier.attribute.rosmsg",
+                        "settings": {
+                            "foreground": "#569CD6"
+                        }
+                    },
+                    {
+                        "scope": "constant.numeric.float.rosmsg",
+                        "settings": {
+                            "foreground": "#B5CEA8"
+                        }
+                    },
+                    {
+                        "scope": "constant.numeric.integer.rosmsg",
+                        "settings": {
+                            "foreground": "#B5CEA8"
+                        }
+                    },
+                    {
+                        "scope": "constant.language.boolean.rosmsg",
+                        "settings": {
+                            "foreground": "#569CD6"
+                        }
+                    },
+                    {
+                        "scope": "string.quoted.double.rosmsg",
+                        "settings": {
+                            "foreground": "#98C379"
+                        }
+                    },
+                    {
+                        "scope": "string.quoted.single.rosmsg",
+                        "settings": {
+                            "foreground": "#98C379"
+                        }
+                    },
+                    {
+                        "scope": "string.unquoted.rosmsg",
+                        "settings": {
+                            "foreground": "#98C379"
+                        }
+                    },
+                    {
+                        "scope": "comment.line.number-sign.rosmsg",
+                        "settings": {
+                            "foreground": "#808080"
+                        }
+                    },
+                    {
+                        "scope": "meta.separator.rosmsg",
+                        "settings": {
+                            "foreground": "#569CD6"
+                        }
+                    },
+                    {
+                        "scope": "invalid.deprecated.rosmsg",
+                        "settings": {
+                            "foreground": "#F14C4C",
+                            "fontStyle": ""
+                        }
+                    }
+                ]
+            }
+        },
+        "commands": [
+            {
+                "command": "ROS2.createTerminal",
+                "title": "%command.ROS2.createTerminal.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.run",
+                "title": "%command.ROS2.run.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.launch",
+                "title": "%command.ROS2.launch.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.showDaemonStatus",
+                "title": "%command.ROS2.showDaemonStatus.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.regenerateIntellisenseConfig",
+                "title": "%command.ROS2.regenerateIntellisenseConfig.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.rosdep",
+                "title": "%command.ROS2.rosdep.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.doctor",
+                "title": "%command.ROS2.doctor.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.tests.refresh",
+                "title": "%command.ROS2.tests.refresh.title%",
+                "category": "ROS2",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "ROS2.tests.runAll",
+                "title": "%command.ROS2.tests.runAll.title%",
+                "category": "ROS2",
+                "icon": "$(play)"
+            },
+            {
+                "command": "ROS2.showWelcome",
+                "title": "%command.ROS2.showWelcome.title%"
+            },
+            {
+                "command": "ROS2.colcon.toggleIgnore",
+                "title": "%command.ROS2.colcon.toggleIgnore.title%",
+                "category": "ROS2",
+                "when": "false"
+            },
+            {
+                "command": "ROS2.colcon.buildPackageRelease",
+                "title": "%command.ROS2.colcon.buildPackageRelease.title%",
+                "category": "ROS2",
+                "when": "false"
+            },
+            {
+                "command": "ROS2.colcon.buildPackageDebug",
+                "title": "%command.ROS2.colcon.buildPackageDebug.title%",
+                "category": "ROS2",
+                "when": "false"
+            },
+            {
+                "command": "ROS2.colcon.build",
+                "title": "%command.ROS2.colcon.build.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.createCppPackage",
+                "title": "%command.ROS2.createCppPackage.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.createPythonPackage",
+                "title": "%command.ROS2.createPythonPackage.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.createMixedPackage",
+                "title": "%command.ROS2.createMixedPackage.title%",
+                "category": "ROS2"
+            },
+            {
+                "command": "ROS2.sidebar.refresh",
+                "title": "%command.ROS2.sidebar.refresh.title%",
+                "category": "ROS2",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "ROS2.sidebar.runExecutable",
+                "title": "%command.ROS2.sidebar.runExecutable.title%",
+                "category": "ROS2",
+                "icon": "$(play)",
+                "when": "false"
+            },
+            {
+                "command": "ROS2.sidebar.launchFile",
+                "title": "%command.ROS2.sidebar.launchFile.title%",
+                "category": "ROS2",
+                "icon": "$(play)",
+                "when": "false"
+            },
+            {
+                "command": "ROS2.sidebar.buildPackage",
+                "title": "%command.ROS2.sidebar.buildPackage.title%",
+                "category": "ROS2",
+                "icon": "$(play)",
+                "when": "false"
+            }
+        ],
+        "terminal": {
+            "profiles": [
+                {
+                    "id": "ros2-dev-extension.ros-environment",
+                    "title": "%terminal.profile.ros-environment.title%"
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "key": "ctrl+shift+b",
+                "command": "ROS2.colcon.build",
+                "when": "ros2.hasRosEnvironment && (ros2.hasPackageXml || ros2.allowEmptyWorkspace)"
+            },
+            {
+                "command": "ROS2.run",
+                "key": "ctrl+f10",
+                "when": "editorTextFocus && resourceFilename =~ /(\\.(py|cpp|cc|cxx)$)|(\\.launch\\.(py|xml|yaml)$)/",
+                "args": {
+                    "source": "activeEditor"
+                }
+            }
+        ],
+        "menus": {
+            "view/title": [
+                {
+                    "command": "ROS2.sidebar.refresh",
+                    "when": "view == ros2.installTruth",
+                    "group": "navigation"
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "ROS2.sidebar.runExecutable",
+                    "when": "view == ros2.installTruth && viewItem == ros2.installTruth.file.executable",
+                    "group": "inline"
+                },
+                {
+                    "command": "ROS2.sidebar.launchFile",
+                    "when": "view == ros2.installTruth && viewItem == ros2.installTruth.file.launch",
+                    "group": "inline"
+                },
+                {
+                    "command": "ROS2.sidebar.buildPackage",
+                    "when": "view == ros2.installTruth && viewItem == ros2.installTruth.package",
+                    "group": "inline"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "submenu": "ROS2.explorer",
+                    "group": "ROS2",
+                    "when": "explorerResourceIsFolder"
+                }
+            ],
+            "ROS2.explorer": [
+                {
+                    "command": "ROS2.colcon.toggleIgnore",
+                    "group": "1_colcon@1"
+                },
+                {
+                    "command": "ROS2.colcon.buildPackageRelease",
+                    "group": "1_colcon@2"
+                },
+                {
+                    "command": "ROS2.colcon.buildPackageDebug",
+                    "group": "1_colcon@3"
+                },
+                {
+                    "command": "ROS2.createCppPackage",
+                    "group": "2_create@1"
+                },
+                {
+                    "command": "ROS2.createPythonPackage",
+                    "group": "2_create@2"
+                },
+                {
+                    "command": "ROS2.createMixedPackage",
+                    "group": "2_create@3"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "ROS2.sidebar.runExecutable",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.sidebar.launchFile",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.sidebar.buildPackage",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.colcon.toggleIgnore",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.colcon.buildPackageRelease",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.colcon.buildPackageDebug",
+                    "when": "false"
+                }
+            ]
+        },
+        "submenus": [
+            {
+                "id": "ROS2.explorer",
+                "label": "ROS 2"
+            }
+        ],
+        "configuration": [
+            {
+                "title": "%config.title.env%",
+                "properties": {
+                    "ROS2.env.distro": {
+                        "order": 1,
+                        "type": "string",
+                        "description": "%config.ROS2.env.distro.description%"
+                    },
+                    "ROS2.env.setupScript": {
+                        "order": 2,
+                        "type": "string",
+                        "description": "%config.ROS2.env.setupScript.description%"
+                    },
+                    "ROS2.env.pixiRoot": {
+                        "order": 3,
+                        "type": "string",
+                        "default": "",
+                        "description": "%config.ROS2.env.pixiRoot.description%"
+                    },
+                    "ROS2.env.systemWatchFiles": {
+                        "order": 4,
+                        "type": "array",
+                        "default": [
+                            "~/.bashrc",
+                            "~/.bash_profile",
+                            "~/.profile",
+                            "~/.zshrc"
+                        ],
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "%config.ROS2.env.systemWatchFiles.description%"
+                    }
+                }
+            },
+            {
+                "title": "%config.title.build%",
+                "properties": {
+                    "ROS2.build.installLayout": {
+                        "order": 2,
+                        "type": "string",
+                        "enum": [
+                            "auto",
+                            "merged",
+                            "isolated"
+                        ],
+                        "default": "auto",
+                        "enumDescriptions": [
+                            "%config.ROS2.build.installLayout.enum.auto%",
+                            "%config.ROS2.build.installLayout.enum.merged%",
+                            "%config.ROS2.build.installLayout.enum.isolated%"
+                        ],
+                        "description": "%config.ROS2.build.installLayout.description%"
+                    },
+                    "ROS2.build.shareSpec": {
+                        "order": 3,
+                        "type": "object",
+                        "default": {
+                            "template": "colcon ${1} build ${install_method} ${install_layout} --event-handlers console_cohesion+ ${2} --base-paths ${base_path} ${packages_select} ${clean} --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                            "custom": "Custom input: hand-write arbitrary colcon arguments (multiple segments and quotes allowed). Add ${0} to the template to enable this entry (unused in the default template)",
+                            "argv_list": [
+                                {
+                                    "argv": "--log-level debug",
+                                    "describe": "Verbose output 1/2: turn on debug logging"
+                                },
+                                {
+                                    "argv": "log_command+",
+                                    "describe": "Verbose output 2/2: log every command invoked"
+                                }
+                            ]
+                        },
+                        "properties": {
+                            "template": {
+                                "type": "string",
+                                "description": "%config.ROS2.build.shareSpec.desc.template%"
+                            },
+                            "custom": {
+                                "type": "string",
+                                "description": "%config.ROS2.build.shareSpec.desc.custom%"
+                            },
+                            "argv_list": {
+                                "type": "array",
+                                "description": "%config.ROS2.build.shareSpec.desc.argv_list%",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "argv": {
+                                            "type": "string",
+                                            "description": "%config.ROS2.build.shareSpec.desc.argv%"
+                                        },
+                                        "describe": {
+                                            "type": "string",
+                                            "description": "%config.shareSpec.desc.describe%"
+                                        }
+                                    },
+                                    "required": [
+                                        "argv",
+                                        "describe"
+                                    ]
+                                }
+                            }
+                        },
+                        "markdownDescription": "%config.ROS2.build.shareSpec.description%"
+                    },
+                    "ROS2.build.preflightWarnings": {
+                        "order": 4,
+                        "type": "string",
+                        "enum": [
+                            "on",
+                            "off",
+                            "ignore-silent-noop"
+                        ],
+                        "default": "on",
+                        "enumDescriptions": [
+                            "%config.ROS2.build.preflightWarnings.enum.on%",
+                            "%config.ROS2.build.preflightWarnings.enum.off%",
+                            "%config.ROS2.build.preflightWarnings.enum.ignore-silent-noop%"
+                        ],
+                        "description": "%config.ROS2.build.preflightWarnings.description%"
+                    },
+                    "ROS2.build.allowEmptyWorkspace": {
+                        "order": 5,
+                        "type": "boolean",
+                        "default": true,
+                        "description": "%config.ROS2.build.allowEmptyWorkspace.description%"
+                    },
+                    "ROS2.build.installMethod": {
+                        "order": 1,
+                        "type": "string",
+                        "enum": [
+                            "auto",
+                            "symlink",
+                            "copy"
+                        ],
+                        "default": "auto",
+                        "enumDescriptions": [
+                            "%config.ROS2.build.installMethod.enum.auto%",
+                            "%config.ROS2.build.installMethod.enum.symlink%",
+                            "%config.ROS2.build.installMethod.enum.copy%"
+                        ],
+                        "description": "%config.ROS2.build.installMethod.description%"
+                    }
+                }
+            },
+            {
+                "title": "%config.title.runLaunch%",
+                "properties": {
+                    "ROS2.run.shareSpec": {
+                        "order": 1,
+                        "type": "object",
+                        "default": {
+                            "template": "ros2 run ${pkg} ${executable} ${0}",
+                            "custom": "Run arguments: arguments passed to the executable (multiple segments and quotes allowed; empty input = no arguments)",
+                            "argv_list": []
+                        },
+                        "properties": {
+                            "template": {
+                                "type": "string",
+                                "description": "%config.ROS2.run.shareSpec.desc.template%"
+                            },
+                            "custom": {
+                                "type": "string",
+                                "description": "%config.ROS2.run.shareSpec.desc.custom%"
+                            },
+                            "argv_list": {
+                                "type": "array",
+                                "description": "%config.ROS2.run.shareSpec.desc.argv_list%",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "argv": {
+                                            "type": "string",
+                                            "description": "%config.shareSpec.desc.argv%"
+                                        },
+                                        "describe": {
+                                            "type": "string",
+                                            "description": "%config.shareSpec.desc.describe%"
+                                        }
+                                    },
+                                    "required": [
+                                        "argv",
+                                        "describe"
+                                    ]
+                                }
+                            }
+                        },
+                        "markdownDescription": "%config.ROS2.run.shareSpec.description%"
+                    },
+                    "ROS2.launch.yamlDefinitionEnabled": {
+                        "order": 1,
+                        "type": "boolean",
+                        "default": true,
+                        "description": "%config.ROS2.launch.yamlDefinitionEnabled.description%"
+                    },
+                    "ROS2.launch.shareSpec": {
+                        "order": 2,
+                        "type": "object",
+                        "default": {
+                            "template": "ros2 launch ${pkg} ${launch_file} ${0}",
+                            "custom": "Launch arguments: arguments passed to the launch file (multiple segments and quotes allowed, e.g. x:=1 y:=2; empty input = no arguments)",
+                            "argv_list": []
+                        },
+                        "properties": {
+                            "template": {
+                                "type": "string",
+                                "description": "%config.ROS2.launch.shareSpec.desc.template%"
+                            },
+                            "custom": {
+                                "type": "string",
+                                "description": "%config.ROS2.launch.shareSpec.desc.custom%"
+                            },
+                            "argv_list": {
+                                "type": "array",
+                                "description": "%config.ROS2.launch.shareSpec.desc.argv_list%",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "argv": {
+                                            "type": "string",
+                                            "description": "%config.shareSpec.desc.argv%"
+                                        },
+                                        "describe": {
+                                            "type": "string",
+                                            "description": "%config.shareSpec.desc.describe%"
+                                        }
+                                    },
+                                    "required": [
+                                        "argv",
+                                        "describe"
+                                    ]
+                                }
+                            }
+                        },
+                        "markdownDescription": "%config.ROS2.launch.shareSpec.description%"
+                    },
+                    "ROS2.run.doctorCommand": {
+                        "order": 3,
+                        "type": "string",
+                        "default": "ros2 doctor --report",
+                        "description": "%config.ROS2.run.doctorCommand.description%"
+                    },
+                    "ROS2.run.rosdepCommand": {
+                        "order": 4,
+                        "type": "string",
+                        "default": "rosdep install --from-paths src --ignore-src -r -y",
+                        "description": "%config.ROS2.run.rosdepCommand.description%"
+                    }
+                }
+            },
+            {
+                "title": "%config.title.msg%",
+                "properties": {
+                    "ROS2.msg.systemRefreshMinutes": {
+                        "order": 1,
+                        "type": "integer",
+                        "default": 10,
+                        "minimum": 1,
+                        "description": "%config.ROS2.msg.systemRefreshMinutes.description%"
+                    },
+                    "ROS2.msg.workspaceRescanMs": {
+                        "order": 2,
+                        "type": "integer",
+                        "default": 60000,
+                        "minimum": 0,
+                        "description": "%config.ROS2.msg.workspaceRescanMs.description%"
+                    },
+                    "ROS2.msg.formatGradientStep": {
+                        "order": 3,
+                        "type": "integer",
+                        "default": 11,
+                        "minimum": 2,
+                        "description": "%config.ROS2.msg.formatGradientStep.description%"
+                    },
+                    "ROS2.msg.formatLineThreshold": {
+                        "order": 4,
+                        "type": "integer",
+                        "default": 60,
+                        "minimum": 10,
+                        "description": "%config.ROS2.msg.formatLineThreshold.description%"
+                    }
+                }
+            },
+            {
+                "title": "%config.title.search%",
+                "properties": {
+                    "ROS2.search.excludeFolders": {
+                        "order": 1,
+                        "type": "array",
+                        "default": [],
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "%config.ROS2.search.excludeFolders.description%"
+                    },
+                    "ROS2.search.followSymlinks": {
+                        "order": 2,
+                        "type": "boolean",
+                        "default": false,
+                        "description": "%config.ROS2.search.followSymlinks.description%"
+                    },
+                    "ROS2.search.walkTimeouts": {
+                        "order": 3,
+                        "type": "array",
+                        "default": [],
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "default",
+                                        "message",
+                                        "test",
+                                        "xacro",
+                                        "package"
+                                    ]
+                                },
+                                "totalTimeoutMs": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                },
+                                "branchTimeoutMs": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                },
+                                "maxDepth": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                }
+                            }
+                        },
+                        "description": "%config.ROS2.search.walkTimeouts.description%"
+                    },
+                    "ROS2.packages.refreshMs": {
+                        "order": 4,
+                        "type": "integer",
+                        "default": 60000,
+                        "minimum": 0,
+                        "description": "%config.ROS2.packages.refreshMs.description%"
+                    }
+                }
+            },
+            {
+                "title": "%config.title.ide%",
+                "properties": {
+                    "ROS2.ide.intellisenseEngine": {
+                        "order": 1,
+                        "type": "string",
+                        "enum": [
+                            "auto",
+                            "cpptools",
+                            "clangd",
+                            "both",
+                            "none"
+                        ],
+                        "default": "both",
+                        "description": "%config.ROS2.ide.intellisenseEngine.description%",
+                        "enumDescriptions": [
+                            "%config.ROS2.ide.intellisenseEngine.enum.auto%",
+                            "%config.ROS2.ide.intellisenseEngine.enum.cpptools%",
+                            "%config.ROS2.ide.intellisenseEngine.enum.clangd%",
+                            "%config.ROS2.ide.intellisenseEngine.enum.both%",
+                            "%config.ROS2.ide.intellisenseEngine.enum.none%"
+                        ]
+                    }
+                }
+            },
+            {
+                "title": "%config.title.ui%",
+                "properties": {
+                    "ROS2.ui.autoShowOutput": {
+                        "order": 1,
+                        "type": "boolean",
+                        "default": true,
+                        "description": "%config.ROS2.ui.autoShowOutput.description%"
+                    },
+                    "ROS2.ui.showWelcomeOnStartup": {
+                        "order": 2,
+                        "type": "boolean",
+                        "default": true,
+                        "description": "%config.ROS2.ui.showWelcomeOnStartup.description%"
+                    }
+                }
+            }
+        ],
+        "languages": [
+            {
+                "id": "xml",
+                "extensions": [
+                    "launch",
+                    "srdf",
+                    "test",
+                    "urdf",
+                    "xacro"
+                ]
+            },
+            {
+                "id": "yaml",
+                "extensions": [
+                    "rviz"
+                ]
+            },
+            {
+                "id": "rosmsg",
+                "aliases": [
+                    "ROS Interface"
+                ],
+                "extensions": [
+                    ".action",
+                    ".msg",
+                    ".srv"
+                ],
+                "configuration": "./snippets/ROS2.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "rosmsg",
+                "scopeName": "source.rosmsg",
+                "path": "./snippets/rosmsg.json"
+            }
+        ],
+        "problemMatchers": [
+            {
+                "name": "colcon-gcc",
+                "fileLocation": "absolute",
+                "owner": "colcon",
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            },
+            {
+                "name": "roscore",
+                "pattern": {
+                    "regexp": ".",
+                    "file": 1,
+                    "line": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".",
+                    "endsPattern": "(process\\[master\\]: started with pid|roscore cannot run|master is already running)"
+                }
+            },
+            {
+                "name": "roslaunch",
+                "pattern": {
+                    "regexp": "^(.*):\\s+(.*):\\s+line\\s+(\\d+),\\s+column\\s+(\\d+)$",
+                    "line": 3,
+                    "column": 4,
+                    "message": 2,
+                    "severity": 1
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "started roslaunch server",
+                    "endsPattern": "ROS_MASTER_URI="
+                }
+            }
+        ],
+        "taskDefinitions": [
+            {
+                "type": "ROS2",
+                "required": [
+                    "command"
+                ],
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "%taskDef.command.description%"
+                    },
+                    "args": {
+                        "type": "array",
+                        "description": "%taskDef.args.description%"
+                    }
+                }
+            },
+            {
+                "type": "colcon",
+                "required": [
+                    "command"
+                ],
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "%taskDef.command.description%"
+                    },
+                    "args": {
+                        "type": "array",
+                        "description": "%taskDef.colcon.args.description%"
+                    }
+                }
+            }
+        ],
+        "testExplorer": [
+            {
+                "id": "ros2-test-provider",
+                "label": "%testExplorer.ros2-test-provider.label%"
+            }
+        ],
+        "walkthroughs": [
+            {
+                "id": "ros2.gettingStarted",
+                "title": "%walkthroughs.gettingStarted.title%",
+                "description": "%walkthroughs.gettingStarted.description%",
+                "steps": [
+                    {
+                        "id": "ros2.welcome",
+                        "title": "%walkthroughs.gettingStarted.steps.welcome.title%",
+                        "description": "%walkthroughs.gettingStarted.steps.welcome.description%",
+                        "media": {
+                            "markdown": "media/walkthroughs/getting-started.md"
+                        }
+                    },
+                    {
+                        "id": "ros2.learnFeatures",
+                        "title": "%walkthroughs.gettingStarted.steps.learnFeatures.title%",
+                        "description": "%walkthroughs.gettingStarted.steps.learnFeatures.description%",
+                        "media": {
+                            "markdown": "media/walkthroughs/commands-and-features.md"
+                        }
+                    }
+                ]
+            }
+        ]
+    },
+    "scripts": {
+        "package:dev": "vsce package -o vsix/ros2-dev-extension-dev.vsix",
+        "build": "npm run package",
+        "lint": "eslint -p ./",
+        "pretest": "npm run test-compile",
+        "test": "node ./out/test/runTest.js",
+        "headless-test": "xvfb-run -a npm test",
+        "vscode:prepublish": "npm run package",
+        "webpack": "webpack --mode development",
+        "watch": "webpack --mode development --watch",
+        "package": "webpack --mode production --devtool source-map --no-optimization-minimize",
+        "package:min": "webpack --mode production --devtool source-map",
+        "test-compile": "tsc -p ./",
+        "dev-build": "npm run test-compile && npm run webpack"
+    },
+    "dependencies": {
+        "@lezer/xml": "^1.0.6",
+        "@ranchhandrobotics/rde-common": "^1.0.0",
+        "@vscode/vsce": "^3.7.0",
+        "assert": "^2.1.0",
+        "buffer": "^6.0.3",
+        "console-browserify": "^1.2.0",
+        "constants-browserify": "^1.0.0",
+        "crypto-browserify": "^3.12.1",
+        "dagre": "^0.8.5",
+        "domain-browser": "^5.7.0",
+        "https-browserify": "^1.0.0",
+        "js-yaml": "^4.1.1",
+        "os-browserify": "^0.3.0",
+        "path-browserify": "^1.0.1",
+        "querystring-es3": "^0.2.1",
+        "shell-quote": "^1.8.3",
+        "stream-browserify": "^3.0.0",
+        "stream-http": "^3.2.0",
+        "string_decoder": "^1.3.0",
+        "sudo-prompt": "^9.2.1",
+        "timers-browserify": "^2.0.12",
+        "tmp": "^0.2.5",
+        "tslib": "^2.8.1",
+        "xmlrpc": "^1.3.2"
+    },
+    "devDependencies": {
+        "@types/dagre": "^0.7.54",
+        "@types/glob": "^9.0.0",
+        "@types/js-yaml": "^4.0.9",
+        "@types/mocha": "^10.0.10",
+        "@types/node": "^24.0.6",
+        "@types/shell-quote": "^1.7.5",
+        "@types/tmp": "^0.2.6",
+        "@types/vscode": "^1.101.0",
+        "@types/vscode-webview": "^1.57.5",
+        "@types/xmlrpc": "^1.3.10",
+        "@vscode/dts": "^0.4.1",
+        "@vscode/test-electron": "^2.5.2",
+        "glob": "^13.0.0",
+        "mocha": "^11.7.5",
+        "mocha-junit-reporter": "^2.2.1",
+        "ts-loader": "^9.5.4",
+        "typescript": "^5.9.3",
+        "webpack": "^5.103.0",
+        "webpack-cli": "^6.0.1"
+    }
+}

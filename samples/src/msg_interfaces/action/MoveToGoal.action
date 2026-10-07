@@ -1,0 +1,101 @@
+# MoveToGoal.action - Testing action syntax highlighting with goal, result, and feedback
+# Action for robot navigation with comprehensive feedback
+
+# Goal - What we want to achieve
+geometry_msgs/PoseStamped target_pose
+float64 position_tolerance       # Meters
+float64 orientation_tolerance  # Radians (~5 degrees)
+float64 max_velocity             # m/s
+bool use_obstacle_avoidance
+string planner_type
+builtin_interfaces/Duration timeout
+uint8 priority                     # 1=high, 5=low
+
+# Behavior options
+uint8 behavior_mode
+uint8 BEHAVIOR_FASTEST=0
+uint8 BEHAVIOR_SAFEST=1
+uint8 BEHAVIOR_ENERGY_EFFICIENT=2
+
+# Recovery options
+bool enable_recovery
+float64 recovery_timeout        # Seconds
+string[] recovery_behaviors
+
+---
+
+# Result - Final outcome when action completes
+bool success
+string result_message
+builtin_interfaces/Duration total_time
+float64 distance_traveled        # Meters
+float64 average_speed             # m/s
+uint32 replanning_count             # Number of times path was replanned
+
+# Final pose achieved
+geometry_msgs/PoseStamped final_pose
+float64 position_error            # Distance from target
+float64 orientation_error         # Angular difference from target
+
+# Path information
+geometry_msgs/PoseStamped[] executed_path
+float64 path_length               # Total path length in meters
+uint32 waypoints_visited
+
+# Performance metrics
+float64 max_speed_achieved        # m/s
+float64 min_clearance             # Closest obstacle distance
+uint32 obstacle_encounters          # Number of dynamic obstacles
+bool recovery_used
+string[] warnings                     # Non-critical issues encountered
+
+# Result codes
+uint8 result_code
+uint8 SUCCESS=0
+uint8 TIMEOUT=1
+uint8 OBSTACLE_BLOCKED=2
+uint8 GOAL_UNREACHABLE=3
+uint8 PREEMPTED=4
+uint8 HARDWARE_ERROR=5
+
+---
+
+# Feedback - Periodic updates during execution
+builtin_interfaces/Time timestamp
+geometry_msgs/PoseStamped current_pose
+float64 distance_remaining        # Meters to goal
+float64 estimated_time_remaining  # Seconds
+float64 current_speed             # m/s
+float64 completion_percentage     # 0.0 to 100.0
+
+# Current path information
+geometry_msgs/PoseStamped[] current_path
+uint32 current_waypoint_index
+float64 path_deviation            # Distance from planned path
+
+# Obstacle information
+bool obstacles_detected
+uint32 obstacle_count
+float64 closest_obstacle_distance # Meters
+geometry_msgs/Point[] obstacle_positions
+
+# Navigation state
+uint8 navigation_state
+uint8 STATE_PLANNING=0
+uint8 STATE_MOVING=1
+uint8 STATE_REPLANNING=2
+uint8 STATE_RECOVERY=3
+uint8 STATE_WAITING=4
+
+# Performance data
+float64 cpu_usage                 # Percentage
+float64 memory_usage              # MB
+string current_planner
+uint32 planning_cycles
+float64 average_planning_time     # Seconds
+
+# Error and warning tracking
+string[] active_warnings
+uint8 warning_level                 # 0=none, 1=minor, 2=major
+bool safety_stop_active
+string status_message

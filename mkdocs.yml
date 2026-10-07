@@ -1,0 +1,35 @@
+site_name: RDE for ROS 2
+nav:
+  - English:
+      - Home: en/index.md
+      - Usage: en/usage.md
+      - Tutorials: en/tutorials.md
+      - Test Explorer: en/test-explorer.md
+      - Configuration: en/configuration.md
+      - IntelliSense: en/intellisense.md
+      - Snippets: en/snippets.md
+      - Pixi: en/pixi.md
+      - Troubleshooting: en/troubleshooting.md
+  - 简体中文:
+      - 首页: zh-cn/index.md
+      - 使用: zh-cn/usage.md
+      - 教程: zh-cn/tutorials.md
+      - 测试资源管理器: zh-cn/test-explorer.md
+      - 配置: zh-cn/configuration.md
+      - 智能感知: zh-cn/intellisense.md
+      - 代码片段: zh-cn/snippets.md
+      - Pixi: zh-cn/pixi.md
+      - 故障排查: zh-cn/troubleshooting.md
+
+theme:
+  name: readthedocs
+  color_mode: auto
+  user_color_mode_toggle: true
+
+markdown_extensions:
+  - pymdownx.tabbed
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      use_pygments: true
+use_directory_urls: false
+strict: true

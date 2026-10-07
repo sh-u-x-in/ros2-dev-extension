@@ -1,0 +1,60 @@
+# 打包排除清单(vsce 依此裁剪 vsix;磁盘上的一切不在名单内的都会进包)
+
+# 源码与构建中间产物(bundle 走 dist/)
+.vscode/**
+.vscode-test/**
+out/**
+test/**
+test-results/**
+src/**
+node_modules/**
+dist/**/*.js.map
+tsconfig.json
+webpack.config.js
+
+# 内部文档与档案(中文内部库,不随扩展分发)
+docs/**
+设计/**
+知识/**
+问题/**
+工作交接/**
+手工重设计/**
+discover/**
+spec/**
+文案普查/**
+samples/**
+
+# 内部工具与源码工程
+scripts/**
+native/walk-native/**
+svg-preview/**
+
+# 本地/未跟踪内容(磁盘上存在但绝不能进包)
+1
+1/**
+ROS2_Tuition-main/**
+rde-urdf-1.7.1
+rde-urdf-1.7.1/**
+vscode-xml-0.29.3
+vscode-xml-0.29.3/**
+_fmt_demo/**
+_npm-cache-tmp/**
+.tmp*
+.tmp*/**
+.ts-demo
+.mimosa/**
+.zcode/**
+.zcodeignore
+.gitignore
+.gitattributes
+.editorconfig
+.clangd
+mkdocs.yml
+pytest.ini
+package-lock.json
+**/*.pyc
+**/__pycache__/**
+
+# 打包产物本身
+*.vsix
+vsix/**

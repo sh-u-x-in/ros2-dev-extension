@@ -1,0 +1,34 @@
+{
+  "name": "walk-native",
+  "version": "0.1.0",
+  "description": "walk-utils.ts 底层重写原生模块(napi-rs),节点级动态队列并行遍历",
+  "main": "index.js",
+  "napi": {
+    "name": "walk-native",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "napi build --release --cargo-name walk_native_core",
+    "build:debug": "napi build --cargo-name walk_native_core",
+    "build:platform": "napi build --platform --release --cargo-name walk_native_core",
+    "build:all": "napi build --platform --release --zig --all --cargo-name walk_native_core",
+    "build:win32-x64": "napi build --release --cargo-name walk_native_core ../../native",
+    "build:win32-arm64": "napi build --release --target aarch64-pc-windows-msvc --zig --cargo-name walk_native_core ../../native",
+    "build:linux-x64": "napi build --release --target x86_64-unknown-linux-gnu --zig --cargo-name walk_native_core ../../native",
+    "build:linux-arm64": "napi build --release --target aarch64-unknown-linux-gnu --zig --cargo-name walk_native_core ../../native",
+    "build:darwin-x64": "napi build --release --target x86_64-apple-darwin --zig --cargo-name walk_native_core ../../native",
+    "build:darwin-arm64": "napi build --release --target aarch64-apple-darwin --zig --cargo-name walk_native_core ../../native"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  }
+}

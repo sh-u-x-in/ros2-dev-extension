@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<robot name="materials" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 可复用材质宏:深蓝 -->
+  <xacro:macro name="material_rde_blue">
+    <material name="rde_blue">
+      <color rgba="0.0 0.2 0.8 1.0"/>
+    </material>
+  </xacro:macro>
+
+  <!-- 可复用材质宏:深灰(轮子/传感器) -->
+  <xacro:macro name="material_rde_dark">
+    <material name="rde_dark">
+      <color rgba="0.2 0.2 0.2 1.0"/>
+    </material>
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,62 @@
+# node.js
+out
+dist/**
+node_modules
+test-results
+
+# vscode-test
+.vscode-test
+.vscode/c_cpp_properties.json
+.vscode/settings.json
+.vscode/**.db*
+test/**/.vscode/**
+test-results/
+site/**
+
+vscode.d.ts
+
+**/.venv/**
+
+**/__pycache__
+
+**/log
+
+samples/**/build
+samples/**/install
+samples/**/log
+samples/**/.vscode
+1
+
+
+ROS2_Tuition-main
+
+# 本地格式化演示文件(不入库)
+_fmt_demo/
+
+# 打包产物 vsix(不入库)
+*.vsix
+
+# 参考扩展源码目录(不入库)
+rde-urdf-1.7.1
+vscode-xml-0.29.3
+
+# walk-native(Rust/napi-rs 源码工程,2026-09-30 迁入 native/)构建产物不入库
+native/walk-native/target/
+native/walk-native/node_modules/
+native/walk-native/testdata/
+# 注意:native/*.node 二进制体积极小且多平台产物需随包分发 → 入库不忽略
+
+_npm-cache-tmp
+/.tmp*
+/.*_tmp
+.ts-demo
+/*_*
+手工重设计/.clangd
+手工重设计/c_cpp_properties copy.json
+手工重设计/c_cpp_properties.json
+手工重设计/.clangd copy
+手工重设计/setting copy.json
+手工重设计/setting.json
+工作交接-自定义终端-2026-09-17.md
+工作交接-自定义终端-2026-09-18.md
+.mimosa

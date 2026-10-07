@@ -1,0 +1,20 @@
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    # ---- 编译标志(与 include 无关) ----
+    - -Wall
+    - -std=c++20
+    # ---- 工作空间包 include(工作空间在前,-I) ----
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\launch_examples\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\lib_without_ament\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\lifecycle_cpp\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\msg_interfaces\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\rde_cpp\include
+    - -Id:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\src\use_lib_without_ament\include
+    # ---- 工作空间安装产物 include:isolated install/<pkg>/include(在后,-isystem) ----
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\install\rde_launch_examples\include\rde_launch_examples
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\install\rde_lib_without_ament\include\rde_lib_without_ament
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\install\rde_lifecycle_cpp\include\rde_lifecycle_cpp
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\install\msg_interfaces\include\msg_interfaces
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\install\rde_cpp\include\rde_cpp
+    - -isystemd:\VM虚拟机\virtual_machine\ros2study\ros2share\rde-ros-2\samples\install\rde_use_lib_without_ament\include\rde_use_lib_without_ament

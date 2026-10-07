@@ -1,0 +1,28 @@
+[package]
+name = "walk-native"
+version = "0.1.0"
+edition = "2021"
+description = "walk-utils.ts 底层重写原型:单线程显式栈 DFS + rayon 并行,考验搜索性能"
+
+# cdylib 供 napi-rs 生成 .node(扩展集成);rlib 供 bin(main.rs CLI)链接
+# lib 名独立(walk_native_core)避免与 bin(walk-native)在 Windows 上 PDB 同名冲突
+[lib]
+name = "walk_native_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rayon = "1"
+regex = "1"
+# dyn-symbols: 用 libloading 运行时从 Node host 动态加载 napi_* 符号,
+# 链接期无需符号定义 → 解决 Linux/macOS 交叉编译 undefined symbol:napi_*
+napi = { version = "2", default-features = false, features = ["napi8", "dyn-symbols"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"
+
+# 性能测试必须 release;开启 LTO 与 codegen-units=1 榨取单线程性能
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
