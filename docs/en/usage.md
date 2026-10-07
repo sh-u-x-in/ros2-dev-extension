@@ -13,14 +13,15 @@ Access the following commands from the [Command Palette](https://code.visualstud
 | Name | Description |
 |---|:---|
 | ROS2: Create Terminal | Create a terminal with the ROS environment pre-loaded. |
-| ROS2: Open ROS 2 Status Page | Open the status page (nodes / topics / services / parameters / lifecycle). |
+| ROS2: Open ROS 2 Status Page (services / topics / parameters) | Open the status page (nodes / topics / services / parameters / lifecycle). |
 | ROS2: Run ROS Executable (ros2 run) | Pick a package and executable, with argument presets and per-target memory. |
 | ROS2: Run ROS Launch File (ros2 launch) | Pick a launch file, with argument presets and per-target memory. |
 | ROS2: Build ROS 2 Packages | Smart `colcon build`: multi-select packages, then pick extra argument presets. |
 | ROS2: Regenerate IntelliSense Configuration (incremental) | Re-sync cpptools / clangd include paths and `compile_commands.json`. |
 | ROS2: Install This Workspace's ROS Dependencies via rosdep | Shortcut for `rosdep install --from-paths src --ignore-src -r -y`. |
 | ROS2: Run ros2 doctor to Diagnose ROS 2 Issues | Run `ros2 doctor` in a ROS terminal. |
-| ROS2: Refresh Test Discovery / Run All Tests | Drive the [Test Explorer](test-explorer.md). |
+| ROS2: Refresh Test Discovery | Refresh [Test Explorer](test-explorer.md) discovery. |
+| ROS2: Run All Tests in Workspace (colcon test) | Run every package's tests via `colcon test`. |
 | ROS2: Show Getting Started | Open the walkthrough. |
 
 Right-clicking a folder in the Explorer offers **Toggle Colcon Ignore**, **Colcon Build (Release/Debug)** and the three **Create Package** wizards (C++ / Python / mixed, with a dependency picker and name validation).
