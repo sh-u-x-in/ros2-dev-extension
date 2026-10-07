@@ -36,11 +36,11 @@ This extension is under **rapid active development** — features and behavior m
 
 ## Configuration
 
-Key settings (see [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/docs/configuration.md)):
+Key settings (see [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/docs/en/configuration.md)):
 
 * `ROS2.env.*` — distribution / setup script / pixi environment;
 * `ROS2.build.shareSpec` / `ROS2.run.shareSpec` / `ROS2.launch.shareSpec` — the template & preset mechanism for the three commands;
-* `ROS2.build.symlinkInstall` / `ROS2.build.installLayout` — install method and layout;
+* `ROS2.build.installMethod` / `ROS2.build.installLayout` — install method (auto / symlink / copy) and layout;
 * `ROS2.search.*` — workspace scan exclusions, symlink following and timeouts.
 
 ## Documentation

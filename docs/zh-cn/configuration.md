@@ -17,7 +17,7 @@
 
 | 设置 | 说明 |
 |---|---|
-| ROS2.build.symlinkInstall | 安装形态:开 = 符号安装(产物链回源码);关 = 拷贝安装。Windows 恒为拷贝 |
+| ROS2.build.installMethod | 安装形态,三值:auto(平台默认:Windows 拷贝 / 其余符号)/ symlink / copy(显式取值优先于平台默认) |
 | ROS2.build.installLayout | 安装布局:auto(平台默认:Windows 合并 / 其余分包)/ merged(--merge-install)/ isolated(colcon 默认) |
 | ROS2.build.shareSpec | 构建命令模板机制(template + custom + argv_list) |
 | ROS2.build.preflightWarnings | 构建前警告模式:on / off / ignore-silent-noop |
@@ -67,6 +67,6 @@
 {
     "ROS2.env.distro": "humble",
     "ROS2.env.setupScript": "/opt/ros/humble/install/setup.bash",
-    "ROS2.build.symlinkInstall": true
+    "ROS2.build.installMethod": "auto"
 }
 ```

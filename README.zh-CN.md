@@ -36,11 +36,11 @@
 
 ## 配置
 
-主要设置(见 [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/docs/configuration.md)):
+主要设置(见 [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/docs/zh-cn/configuration.md)):
 
 * `ROS2.env.*` —— 发行版 / setup 脚本 / pixi 环境;
 * `ROS2.build.shareSpec` / `ROS2.run.shareSpec` / `ROS2.launch.shareSpec` —— 三条命令的模板与预设机制;
-* `ROS2.build.symlinkInstall` / `ROS2.build.installLayout` —— 安装形态与布局;
+* `ROS2.build.installMethod` / `ROS2.build.installLayout` —— 安装形态(auto / symlink / copy)与布局;
 * `ROS2.search.*` —— 工作区扫描的排除目录、符号链接跟随与超时。
 
 ## 文档
