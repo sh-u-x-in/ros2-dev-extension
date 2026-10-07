@@ -928,6 +928,7 @@
                 "id": "ros2.gettingStarted",
                 "title": "%walkthroughs.gettingStarted.title%",
                 "description": "%walkthroughs.gettingStarted.description%",
+                "when": "ros2.uiLocale != zh-cn",
                 "steps": [
                     {
                         "id": "ros2.welcome",
@@ -943,6 +944,30 @@
                         "description": "%walkthroughs.gettingStarted.steps.learnFeatures.description%",
                         "media": {
                             "markdown": "media/walkthroughs/commands-and-features.md"
+                        }
+                    }
+                ]
+            },
+            {
+                "id": "ros2.gettingStarted.zh",
+                "title": "%walkthroughs.gettingStarted.zh.title%",
+                "description": "%walkthroughs.gettingStarted.zh.description%",
+                "when": "ros2.uiLocale == zh-cn",
+                "steps": [
+                    {
+                        "id": "ros2.welcome.zh",
+                        "title": "%walkthroughs.gettingStarted.zh.steps.welcome.title%",
+                        "description": "%walkthroughs.gettingStarted.zh.steps.welcome.description%",
+                        "media": {
+                            "markdown": "media/walkthroughs/getting-started.zh-cn.md"
+                        }
+                    },
+                    {
+                        "id": "ros2.learnFeatures.zh",
+                        "title": "%walkthroughs.gettingStarted.zh.steps.learnFeatures.title%",
+                        "description": "%walkthroughs.gettingStarted.zh.steps.learnFeatures.description%",
+                        "media": {
+                            "markdown": "media/walkthroughs/commands-and-features.zh-cn.md"
                         }
                     }
                 ]
