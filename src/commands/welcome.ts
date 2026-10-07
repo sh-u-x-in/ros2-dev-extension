@@ -10,7 +10,7 @@ import { getLogger } from "../logger";
 import * as vscode from "vscode";
 
 import { Commands, ensureErrorMessageOnException } from "../extension";
-import { WALKTHROUGH_ID } from "../onboarding";
+import { gettingStartedWalkthroughId, setUiLocaleContext } from "../onboarding";
 
 /** 扩展日志薄封装(带 commands-welcome 模块前缀) */
 const log = getLogger("commands-welcome");
@@ -20,7 +20,9 @@ export function registerWelcomeCommand(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(Commands.ShowWelcome, () => {
         ensureErrorMessageOnException(() => {
             log.trace(vscode.l10n.t("Executing command: {0}", Commands.ShowWelcome));
-            vscode.commands.executeCommand('workbench.action.openWalkthrough', WALKTHROUGH_ID);
+            // 命令面板入口可能在 showWelcomeIfNeeded 之外触发,此处兜底确保语言门控键已设
+            setUiLocaleContext();
+            vscode.commands.executeCommand('workbench.action.openWalkthrough', gettingStartedWalkthroughId());
         });
     });
 }

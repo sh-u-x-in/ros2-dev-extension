@@ -94,5 +94,11 @@
     "walkthroughs.gettingStarted.steps.welcome.title": "欢迎使用 ROS 2 开发",
     "walkthroughs.gettingStarted.steps.welcome.description": "了解 ROS 2 机器人开发扩展提供的强大功能。",
     "walkthroughs.gettingStarted.steps.learnFeatures.title": "探索扩展功能",
-    "walkthroughs.gettingStarted.steps.learnFeatures.description": "发现可用于 ROS 2 开发的命令和功能。"
+    "walkthroughs.gettingStarted.steps.learnFeatures.description": "发现可用于 ROS 2 开发的命令和功能。",
+    "walkthroughs.gettingStarted.zh.title": "ROS 2 入门",
+    "walkthroughs.gettingStarted.zh.description": "了解如何设置并使用 ROS 2 机器人开发扩展",
+    "walkthroughs.gettingStarted.zh.steps.welcome.title": "欢迎使用 ROS 2 开发",
+    "walkthroughs.gettingStarted.zh.steps.welcome.description": "了解 ROS 2 机器人开发扩展能做什么。",
+    "walkthroughs.gettingStarted.zh.steps.learnFeatures.title": "探索扩展功能",
+    "walkthroughs.gettingStarted.zh.steps.learnFeatures.description": "发现可用于 ROS 2 开发的命令和功能。"
 }

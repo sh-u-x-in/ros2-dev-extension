@@ -15,8 +15,25 @@ import { probeValidWorkspacePackages } from "./build-tool/package-core/api";
 /** 欢迎演练模块日志 */
 const log = getLogger("onboarding");
 
-/** The walkthrough ID for the getting started guide (格式 = <publisher>.<name>#<walkthrough id>,必须与 package.json 一致) */
-export const WALKTHROUGH_ID = "sh-u-x-in.ros2-dev-extension#ros2.gettingStarted";
+/**
+ * The walkthrough ID for the getting started guide (格式 = <publisher>.<name>#<walkthrough id>,必须与 package.json 一致)。
+ * 2026-10-07:walkthrough 正文 md 不走 l10n,按 UI 语言二选一(package.json 双 walkthrough 以 ros2.uiLocale 门控,
+ * 本函数与之同口径)。
+ */
+export function gettingStartedWalkthroughId(): string {
+    return vscode.env.language === "zh-cn"
+        ? "sh-u-x-in.ros2-dev-extension#ros2.gettingStarted.zh"
+        : "sh-u-x-in.ros2-dev-extension#ros2.gettingStarted";
+}
+
+/**
+ * 把当前 UI 语言写入上下文键 ros2.uiLocale(欢迎页双 walkthrough 的 when 门控依据;
+ * zh-cn 显示中文版,其余显示英文版。须在激活早期调用,键未设置时两套 walkthrough 均不显示)。
+ */
+export function setUiLocaleContext(): void {
+    void vscode.commands.executeCommand("setContext", "ros2.uiLocale", vscode.env.language);
+    log.debug(`UI locale context set: ros2.uiLocale=${vscode.env.language}`);
+}
 // (2026-10-04 i18n 期2)弹窗文案改为调用点 l10n.t 取串:英文源=无对应语言册时的兜底显示,
 // 中文译文收在 l10n/bundle.l10n.zh-cn.json;「不再显示」是双角色串(按钮文案+返回值比较键),比较必须用同一常量
 const LAST_SHOWN_WELCOME_VERSION_KEY = "onboarding.lastShownWelcomeVersion";
@@ -42,6 +59,7 @@ function readLastShownWelcomeVersion(context: vscode.ExtensionContext): string {
  * 需要时展示欢迎演练(首次安装、版本升级,或 ROS 未检测到)。
  */
 export async function showWelcomeIfNeeded(context: vscode.ExtensionContext): Promise<void> {
+    setUiLocaleContext();
     const config = vscode_utils.getExtensionConfiguration();
     const showWelcomeOnStartup = config.get("ui.showWelcomeOnStartup", true);
     log.debug(vscode.l10n.t("Welcome walkthrough toggle check: showWelcomeOnStartup={0}", showWelcomeOnStartup));
@@ -88,7 +106,7 @@ export async function showWelcomeIfNeeded(context: vscode.ExtensionContext): Pro
             } else if (selection === UPDATED_WELCOME_PROMPT_NO || selection === undefined) {
                 return;
             } else {
-                vscode.commands.executeCommand('workbench.action.openWalkthrough', WALKTHROUGH_ID);
+                vscode.commands.executeCommand('workbench.action.openWalkthrough', gettingStartedWalkthroughId());
             }
         }
     }, 5000);
