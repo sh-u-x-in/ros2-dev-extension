@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.2] - 2026-10-07
+
+### Added
+
+- **Walkthrough content auto-switching**: the getting-started pages are now split into per-language files and two locale-gated walkthroughs (`ros2.uiLocale` context key) — the welcome page shows the language matching the VS Code display language instead of a mixed bilingual page;
+- **Documentation site goes bilingual** (`docs/en/` + `docs/zh-cn/`, nine pages each) with real usage captures: msg / xacro / launch navigation GIFs, smart-build flow, package-contents sidebar and Test Explorer screenshots;
+- **Development status note** in the README and docs: rapid iteration, primarily tested on Linux (Humble); Windows not systematically tested (status page in particular) — feedback welcome.
+
+### Fixed
+
+- `Ctrl+F10` one-key run: shortcut routing decided inside the handler by file type (launch files → launch arguments, py/cpp → run arguments); removes an invalid negation regex in the keybinding `when` clause that caused unconditional registration;
+- README/docs accuracy pass: dead documentation links after the bilingual restructure, install-method setting keys aligned with the current `ROS2.build.installMethod` (three-value), command tables aligned verbatim with the localized command titles.
+
 ## [0.0.1] - 2026-09-29
 
 First public release (version numbering restarts at 0.0.1).
