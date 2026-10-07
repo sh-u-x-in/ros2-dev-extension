@@ -1,0 +1,55 @@
+name: Bug report / 缺陷报告
+description: Report a problem with the extension / 报告扩展的问题
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem! / 感谢反馈！
+        请尽量填写以下各项;中文或英文均可。
+        Please fill in as much as you can; Chinese or English is fine.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened? / 发生了什么?
+      description: Expected vs actual behavior / 期望行为与实际表现
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. Open workspace ...
+        2. Click ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system / 操作系统
+      options:
+        - Windows
+        - Linux
+        - macOS
+    validations:
+      required: true
+
+  - type: input
+    id: ros-distro
+    attributes:
+      label: ROS 2 distribution / ROS 2 发行版
+      placeholder: e.g. humble (installed via apt / pixi / ...)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs from the "ROS 2" output channel / 「ROS 2」输出通道日志
+      description: Output panel → select "ROS 2" → copy relevant lines (remove sensitive info)
+    validations:
+      required: false
