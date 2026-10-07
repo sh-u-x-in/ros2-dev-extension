@@ -1,0 +1,69 @@
+<?xml version="1.0"?>
+<!--
+  XG11 语法夹具:Tier1/Tier2 构造全覆盖(设计/xacro/13 §7 频次分层)
+  覆盖:宏参数全家桶(默认/^ 转发/^| 回退/*块/**字典)/ insert_block / 递归宏 /
+        xacro:call / if-unless / 列表与下标 / 字符串格式化 / load_yaml 点访问 /
+        ns include 与点名宏 / glob include(XG10 枚举)
+  用途:0-error 护栏(X1/X7)+ 导航/补全在真实构造上的集成回归
+-->
+<robot name="rde_grammar_showcase" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="show_debug" default="false"/>
+
+  <!-- 列表属性 + 下标 + 字符串格式化(Tier1/2) -->
+  <xacro:property name="joints" value="${['j1', 'j2', 'j3']}"/>
+  <xacro:property name="first_joint" value="${joints[0]}"/>
+  <xacro:property name="padded" value="${'%03d' % 7}"/>
+
+  <!-- YAML 属性 + 点访问(Tier2;官方 load_yaml) -->
+  <xacro:property name="props" value="${load_yaml('props.yaml')}"/>
+
+  <!-- 块属性(insert_block 源;官方存储名前缀 **) -->
+  <xacro:property name="default_origin">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:property>
+
+  <!-- 宏参数全家桶:标量 / :=默认 / ^| 转发回退 / *块 / **字典 -->
+  <xacro:macro name="show_macro" params="prefix name:=part scale:=^|1.0 *origin **extra">
+    <link name="${prefix}_${name}">
+      <xacro:insert_block name="origin"/>
+      <xacro:insert_block name="extra"/>
+    </link>
+  </xacro:macro>
+
+  <!-- 递归宏(官方无循环语法,递归替代) -->
+  <xacro:macro name="count_to" params="n">
+    <xacro:if value="${n > 0}">
+      <link name="link_${n}"/>
+      <xacro:count_to n="${n - 1}"/>
+    </xacro:if>
+  </xacro:macro>
+
+  <!-- 调用:块参数由子元素填充(多余子元素官方报 Unused block) -->
+  <xacro:show_macro prefix="show" name="${first_joint}">
+    <origin xyz="1 0 0"/>
+    <inertial>
+      <mass value="${props.mass}"/>
+    </inertial>
+  </xacro:show_macro>
+
+  <!-- 动态调用(官方 xacro:call) -->
+  <xacro:call macro="show_macro"/>
+
+  <!-- if / unless(字面量与 ${arg} 驱动) -->
+  <xacro:if value="true">
+    <link name="always"/>
+  </xacro:if>
+  <xacro:unless value="${show_debug}">
+    <link name="no_debug"/>
+  </xacro:unless>
+
+  <!-- ns include + 点访问(Tier3;${drv.prop} / xacro:drv.macro) -->
+  <xacro:include filename="ns_parts.urdf.xacro" ns="drv"/>
+  <geometry radius="${drv.ns_radius}"/>
+  <xacro:drv.ns_macro prefix="drv"/>
+
+  <!-- glob include(XG10:sorted 枚举 parts/ 下两个文件) -->
+  <xacro:include filename="parts/*.xacro"/>
+
+</robot>

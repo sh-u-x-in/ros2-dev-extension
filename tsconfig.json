@@ -1,0 +1,36 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "moduleResolution":"Node",
+        "target": "es6",
+        "outDir": "out",
+        "lib": [
+            "dom",
+            "es6"
+        ],
+        "sourceMap": true,
+        "rootDir": ".",
+        "noImplicitAny": false,
+        "noImplicitReturns": true,
+        "useUnknownInCatchVariables": true
+    },
+    "exclude": [
+        "node_modules",
+        ".vscode-test",
+        "samples",
+        "vscode.d.ts",
+        "rde-urdf-1.7.1",
+        "vscode-xml-0.29.3",
+        // 2026-09-04 断电:config 除 gen 外退役(exe-map 读侧 + write 写侧)——代码留档,不参与编译
+        "src/build-tool/package-service/config/exe-map",
+        "src/build-tool/package-service/config/write",
+        // 对应测试套件随模块断电一同排除(测试死模块无意义)
+        "test/suite/executable-map.test.ts",
+        "test/suite/setup-parser.test.ts",
+        "test/suite/cmake-parser.test.ts",
+        "test/suite/configure-actions.test.ts",
+        "test/suite/rename-actions.test.ts",
+        "test/suite/anchors.test.ts",
+        "test/suite/write-api.test.ts"
+    ]
+}

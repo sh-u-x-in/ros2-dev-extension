@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<robot name="sensors" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 激光雷达宏:圆柱 + 固定关节 -->
+  <xacro:macro name="laser_macro" params="prefix xyz">
+    <link name="${prefix}_laser_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.05" length="0.03"/>
+        </geometry>
+        <material name="rde_dark"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="0.05" length="0.03"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}_laser_joint" type="fixed">
+      <parent link="${prefix}_base_link"/>
+      <child link="${prefix}_laser_link"/>
+      <origin xyz="${xyz}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- 相机宏:mesh 模型 + $(find pkg) 包路径引用 -->
+  <xacro:macro name="camera_macro" params="prefix xyz">
+    <link name="${prefix}_camera_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="$(find rde_ros_2)/samples/xacro/meshes/camera.stl" scale="0.01 0.01 0.01"/>
+        </geometry>
+        <material name="rde_dark"/>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="$(find rde_ros_2)/samples/xacro/meshes/camera.stl" scale="0.01 0.01 0.01"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}_camera_joint" type="fixed">
+      <parent link="${prefix}_base_link"/>
+      <child link="${prefix}_camera_link"/>
+      <origin xyz="${xyz}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,73 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558 
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // npm: watch —— 手动/Ctrl+Shift+B 的常驻增量构建(webpack watch)。
+            // 注意：输出不匹配 $tsc-watch matcher，作为 preLaunchTask 会永远等不到"就绪"(历史 F5 卡死主因之一)。
+            // 开发调试请走 launch.json 的 Extension 配置(用下面的 dev-build 一遍式)，勿把本任务设为 preLaunchTask。
+            "type": "npm",
+            "script": "watch",
+            "problemMatcher": "$tsc-watch",
+            "isBackground": true,
+            "presentation": {
+                "reveal": "never"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            // dev-build —— Extension 的 preLaunchTask，即"编译→调试"主流程：
+            //   npm 脚本 dev-build(package.json)按序跑 test-compile(tsc 产 out/)+ webpack(产 dist/)。
+            // 用 npm 脚本(经 cmd/bash)而非 shell 拼接 &&：规避 Windows PowerShell 5.1 不支持 &&
+            // 及用户 profile 注入脚本(sentinel 等)拦截任务。跑完即结束，不卡 F5。
+            "label": "dev-build",
+            "type": "npm",
+            "script": "dev-build",
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Mocha Tests",
+            "type": "shell",
+            "command": "npm run test-compile && npm test",
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Test Compile",
+            "type": "npm",
+            "script": "test-compile",
+            "group": "build",
+            "problemMatcher": "$tsc"
+        },
+        {
+            "label": "Source ROS 2 Environment",
+            "type": "shell",
+            "command": "source /opt/ros/kilted/setup.bash && echo 'ROS 2 environment sourced'",
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

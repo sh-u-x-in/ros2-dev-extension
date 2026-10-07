@@ -1,0 +1,33 @@
+// 调试本扩展本体(编译 → 弹扩展宿主 → 在 src/*.ts 打断点)。
+// 经验记录：
+//   1) "配置的类型 extensionHost 不受支持" → 内置扩展 ms-vscode.js-debug(JavaScript Debugger)被禁用，重新启用。
+//   2) 长时间停在"正在等待 preLaunchTask dev-build" → 属正常：dev-build 先全量 tsc 再 webpack，首次约 10~30s。
+//   3) F5 用的是下拉里选中的配置(会记忆)：想跑扩展本体务必选 Extension(第一项默认)。
+{
+  "version": "0.2.0",
+  "configurations": [
+    //   · Extension → preLaunchTask dev-build（npm 脚本：test-compile 产 out/ → webpack 产 dist/），完成后弹扩展宿主窗口；
+    //   · Tests     → 集成测试宿主（extensionTestsPath）。
+    // 2026-09-22:调试链路已整体移除 ⇒ 原「Debugger」「Debug Launch Dumper (python/cpp)」配置一并删除。
+    {
+      "name": "Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": ["--extensionDevelopmentPath=${workspaceRoot}"],
+      "sourceMaps": true,
+      "outFiles": ["${workspaceRoot}/dist/**/*.js"],
+      "preLaunchTask": "dev-build"
+    },
+    {
+      "name": "Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": ["--extensionDevelopmentPath=${workspaceRoot}", "--extensionTestsPath=${workspaceRoot}/out/test"],
+      "sourceMaps": true,
+      "outFiles": ["${workspaceRoot}/out/**/*.js"],
+      "preLaunchTask": "npm: test-compile"
+    }
+  ]
+}

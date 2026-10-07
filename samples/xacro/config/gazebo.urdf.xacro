@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot name="gazebo_config" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- gazebo 仿真插件宏:差速驱动控制 -->
+  <xacro:macro name="gazebo_diff_drive_macro" params="prefix">
+    <gazebo>
+      <plugin name="${prefix}_diff_drive" filename="libgazebo_ros_diff_drive.so">
+        <ros>
+          <namespace>/${prefix}</namespace>
+        </ros>
+        <left_joint>${prefix}_wheel_left_joint</left_joint>
+        <right_joint>${prefix}_wheel_right_joint</right_joint>
+        <wheel_separation>0.32</wheel_separation>
+        <wheel_diameter>0.2</wheel_diameter>
+        <max_wheel_torque>20.0</max_wheel_torque>
+        <max_wheel_acceleration>1.0</max_wheel_acceleration>
+        <command_topic>cmd_vel</command_topic>
+        <odometry_topic>odom</odometry_topic>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+
+</robot>

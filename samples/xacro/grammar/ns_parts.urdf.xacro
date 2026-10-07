@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- XG11 夹具:ns= include 目标(命名空间属性 + 宏,主文件以 drv. 前缀访问) -->
+<robot name="rde_ns_parts" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="ns_radius" value="0.2"/>
+
+  <xacro:macro name="ns_macro" params="prefix">
+    <link name="${prefix}_ns"/>
+  </xacro:macro>
+
+</robot>

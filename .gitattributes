@@ -1,0 +1,20 @@
+# 统一换行策略（随仓库携带，替代各机器手改 core.autocrlf）
+# 策略：仓库内一律存储 LF（text=auto）；Windows 检出按本机 autocrlf 习惯转 CRLF，
+#       Linux/mac 检出保持 LF —— 任意平台 clone 后 git status 均无换行噪音。
+# 2026-09-07 已对既有文件执行过一次 git add --renormalize（见对应提交说明）。
+* text=auto
+
+# 明确二进制，防止 text=auto 误判
+*.vsix binary
+*.node binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
+*.zip binary

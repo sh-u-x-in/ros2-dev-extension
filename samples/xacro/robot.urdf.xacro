@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<!--
+  轮式移动机器人 URDF/Xacro 主文件(RDE-ROS-2 xacro 样例)
+  覆盖:多层 include / 宏调用 / property / arg / 条件 include / $(find pkg)
+-->
+<robot name="rde_wheeled_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 命令行参数(可被 roslaunch / launch 传入) -->
+  <xacro:arg name="use_gazebo" default="false"/>
+  <xacro:arg name="robot_namespace" default="rde"/>
+
+  <!-- 全局属性:尺寸 / 质量常量 -->
+  <xacro:property name="base_length" value="0.4"/>
+  <xacro:property name="base_width" value="0.3"/>
+  <xacro:property name="base_height" value="0.15"/>
+  <xacro:property name="wheel_radius" value="0.1"/>
+  <xacro:property name="wheel_width" value="0.05"/>
+  <xacro:property name="total_mass" value="2.0"/>
+
+  <!-- 材质与通用宏 -->
+  <xacro:include filename="description/materials.urdf.xacro"/>
+  <xacro:include filename="description/base.urdf.xacro"/>
+  <xacro:include filename="description/sensors.urdf.xacro"/>
+
+  <!-- 纯 URDF 文件 include(底盘板) -->
+  <xacro:include filename="urdf/base_plate.urdf"/>
+
+  <!-- 底盘主体 -->
+  <xacro:base_macro
+      prefix="${robot_namespace}"
+      length="${base_length}"
+      width="${base_width}"
+      height="${base_height}"/>
+
+  <!-- 轮子 ×2(同一宏,不同位姿/后缀) -->
+  <xacro:wheel_macro prefix="${robot_namespace}" xyz="0.15 -0.16 0.0" suffix="_left"/>
+  <xacro:wheel_macro prefix="${robot_namespace}" xyz="0.15  0.16 0.0" suffix="_right"/>
+
+  <!-- 传感器 -->
+  <xacro:laser_macro prefix="${robot_namespace}" xyz="0.2 0.0 0.08"/>
+  <xacro:camera_macro prefix="${robot_namespace}" xyz="0.15 0.0 0.10"/>
+
+  <!-- 条件编译:启用 gazebo 仿真配置 -->
+  <xacro:if value="${use_gazebo}">
+    <xacro:include filename="config/gazebo.urdf.xacro"/>
+  </xacro:if>
+
+</robot>

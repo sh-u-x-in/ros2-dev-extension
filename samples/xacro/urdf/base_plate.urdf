@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<robot name="base_plate">
+  <!-- 纯 URDF 文件:底盘板(被主 xacro include,演示 xacro 混合 include) -->
+  <link name="base_plate_link">
+    <visual>
+      <origin xyz="0 0 -0.02" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://rde_ros_2/samples/xacro/meshes/base_plate.dae" scale="0.01 0.01 0.01"/>
+      </geometry>
+      <material name="rde_blue"/>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://rde_ros_2/samples/xacro/meshes/base_plate.dae" scale="0.01 0.01 0.01"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>

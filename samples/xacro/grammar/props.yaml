@@ -1,0 +1,5 @@
+# XG11 夹具:load_yaml 点访问目标(官方 YamlDictWrapper 语义)
+mass: 1.5
+radius: 0.2
+friction:
+  coefficient: 0.9
