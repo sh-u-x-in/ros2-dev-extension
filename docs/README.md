@@ -31,7 +31,7 @@ mkdocs build   # strict build check
 
 | Time (to the minute) | Note |
 |---|---|
-| 2026-10-07 | **Bilingual restructure (user decision)**: pages split into `en/` + `zh-cn/` (9 pages each, full Chinese mirrors); mkdocs nav now two top-level language sections, site name → "RDE for ROS 2"; stale content fixed en route (configuration.md dropped the removed debug launch-config block and the pre-batch-3 `installMethod` key → `symlinkInstall`, pixi.md `env.env.pixiRoot` typo ×2, tutorials.md dead debug-support links replaced with a learning path) |
+| 2026-10-07 | **Bilingual restructure (user decision)**: pages split into `en/` + `zh-cn/` (9 pages each, full Chinese mirrors); mkdocs nav now two top-level language sections, site name → "RDE for ROS 2"; stale content fixed en route (configuration.md dropped the removed debug launch-config block and aligned install-method keys (final, after settings batch A: `installMethod` auto/symlink/copy + `installLayout`), pixi.md `env.env.pixiRoot` typo ×2, tutorials.md dead debug-support links replaced with a learning path) |
 | 2026-10-05 | Upstream leftovers removed (three dead launch-tree docs, debug-support/spec screenshots, upstream pipeline screenshots, branded hero.png); index.md rewritten to the extension's real feature set (removed the bogus "debugging support" wording) |
 | 2026-10-04 | i18n phase 6: index.md and configuration.md translated to English (setting descriptions aligned with package.nls.json wording) |
 | 2026-09-29 | Created (docs-folder README batch): nav 8 pages verified against mkdocs.yml; mixed-in development docs listed as-is (setting key names synced in batch 3, see docs/configuration.md) |
