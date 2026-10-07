@@ -1,6 +1,7 @@
 # 打包排除清单(vsce 依此裁剪 vsix;磁盘上的一切不在名单内的都会进包)
 
 # 源码与构建中间产物(bundle 走 dist/)
+.github/**
 .vscode/**
 .vscode-test/**
 out/**

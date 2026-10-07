@@ -1,0 +1,48 @@
+# 开发仓 → 发布仓 自动同步器
+# 每次推送到 main(或手动触发)时:导出干净树 → 剔除内部目录 → 推送到 ros2-dev-extension。
+# 前置:开发仓 Settings → Secrets and variability → Actions 里配置 RELEASE_TOKEN
+#       (PAT,需 Code Read&Write 权限,能推 ros2-dev-extension 仓库)。
+name: Sync to release repository
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export clean tree
+        run: |
+          mkdir -p /tmp/export
+          git archive HEAD | tar -x -C /tmp/export
+          cd /tmp/export
+          # 与本地同步纪律同一份剔除清单(内部中文库/工具/AI 会话档)
+          rm -rf 设计 知识 问题 工作交接 手工重设计 文案普查 discover .zcode scripts .zcodeignore
+
+      - name: Install release workflows
+        run: |
+          # 发布仓的 CI/发布工作流由本仓单源维护(.github/release/),随同步安装
+          mkdir -p /tmp/export/.github/workflows
+          cp .github/release/*.yml /tmp/export/.github/workflows/
+
+      - name: Push to release repository
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/sh-u-x-in/ros2-dev-extension.git" /tmp/rel
+          rsync -a --delete /tmp/export/ /tmp/rel/ --exclude .git --exclude node_modules
+          cd /tmp/rel
+          git config user.name "release-sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to sync."
+          else
+            git commit -m "sync from dev repository @ ${GITHUB_SHA::7}"
+            git push origin main
+          fi

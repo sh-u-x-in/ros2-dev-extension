@@ -4,6 +4,8 @@
 
 一个 Visual Studio Code 扩展,为 Windows、Linux 和 macOS 上的 [机器人操作系统 2(ROS 2)](https://www.ros.org) 开发提供支持。
 
+![包内容侧边栏与 ROS 2 状态页](docs/assets/package-sidebar.png)
+
 > 本项目衍生自 [ranchhandrobotics/rde-ros-2](https://github.com/ranchhandrobotics/rde-ros-2) 与
 > [ms-iot/vscode-ros](https://github.com/ms-iot/vscode-ros)(均为 MIT 许可),在此致谢;许可详情见文末与 [ThirdPartyNotices](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/ThirdPartyNotices.md)。
 

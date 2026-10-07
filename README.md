@@ -2,6 +2,8 @@
 
 A Visual Studio Code extension supporting [Robot Operating System 2 (ROS 2)](https://www.ros.org) development on Windows, Linux and macOS.
 
+![Package contents sidebar and ROS 2 status page](docs/assets/package-sidebar.png)
+
 > This project is derived from [ranchhandrobotics/rde-ros-2](https://github.com/ranchhandrobotics/rde-ros-2) and
 > [ms-iot/vscode-ros](https://github.com/ms-iot/vscode-ros) (both MIT licensed), with thanks; see the license details at the bottom and [ThirdPartyNotices](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/ThirdPartyNotices.md).
 
