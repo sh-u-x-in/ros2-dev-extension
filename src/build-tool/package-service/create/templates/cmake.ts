@@ -14,10 +14,18 @@
  *     PROGRAMS 命令名带 .py;ros2 run 先经 share 地图定前缀再 os.walk lib/<pkg>。
  *
  * 扩展位: 顶部常量表允许变量替换; 每个场景一块独立代码段, 好改好抄。
+ *
+ * 教学注释 L10N(2026-10-12,用户裁定「路线 2」):全部教学散文注释以稳定 ID 查表
+ * (源语言表 = l10n/templates/en.ts 英语源,译文表 = l10n/templates/zh-cn.ts 等),
+ * 按 `lang` 出**单语**生成物(同文件内不再中英混排);**代码示例行/被注释掉的代码不译**,
+ * 保持内联。缺省 "en" 时输出与历史英文版逐字节一致。
  */
 
 import { getLogger } from "../../../../logger";
 import { depTagClass } from '../deps/dep-catalog';
+import { resolveCmakeStrings } from '../../../../../l10n/templates/index';
+import type { TemplateCommentLang } from '../../../../../l10n/templates/index';
+import type { CxxStandard } from "../../config/gen/distro-templates";
 
 /** 扩展日志薄封装(带 tmpl-cmake 模块前缀) */
 const log = getLogger("tmpl-cmake");
@@ -64,6 +72,12 @@ export interface CmakeSpec {
      * 两个变体的注释文本都版本中立(不出现发行版名/"conventions"概念), 只讲形态 + 简因。
      */
     includeLayout?: "double" | "single";
+    /**
+     * C++ 标准锁定(2026-10-13, 按机器发行版分派经 resolveCxxStandard 注入; 缺省 "17"):
+     * dashing~foxy=14 / galactic~kilted=17 / lyrical=20 / 未知→17。经 guard 块写入 CMakeLists
+     * (if NOT → set + REQUIRED), 外部 -DCMAKE_CXX_STANDARD 可覆盖。生成文本版本中立不写发行版名。
+     */
+    cxxStandard?: CxxStandard;
 }
 
 /**
@@ -87,7 +101,7 @@ function nodeDependencyNames(spec: CmakeSpec): string[] {
  *       → 接口定义示例块 → 头文件/库公开示例块 → Python 模块 → 安装(真实代码 + launch/include 示例块)
  *       → 测试 → ament_package()。
  */
-export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
+export function renderCmakeLists(pkg: string, spec: CmakeSpec, lang: TemplateCommentLang = "en"): string {
     const cppNodes = spec.cppNodes;
     const PN = cm('PROJECT_NAME'); // CMake 变量(项目名)
     const depNames = nodeDependencyNames(spec); // 每个 C++ 节点统一的依赖列表
@@ -95,10 +109,20 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     const stdMsgsEnabled = spec.extraDeps.includes('std_msgs');
     const hasCpp = cppNodes.length > 0;
     const hasScripts = spec.pythonScriptPaths.length > 0;
-    // 头文件布局按机器发行版分派(缺省 double; 文本两个变体都版本中立、不携带"conventions"概念)
+    // 头文件布局按机器发行版分派(缺省 double; 文本两个变体都版本中立、不携带"约定"概念)
     const doubleLayout = (spec.includeLayout ?? 'double') === 'double';
     // 示例块通用拼接
     const depListStr = depNames.join(' ');
+
+    // 教学注释表(按语种; 缺省 en 与历史英文版逐字节一致)
+    const T = resolveCmakeStrings(lang, {
+        pkg,
+        PN,
+        ver: CMAKE_MIN_VERSION,
+        sampleExe: SAMPLE_EXE_NAME,
+        sampleScript: SAMPLE_SCRIPT_PATH,
+        curSrc: cm('CMAKE_CURRENT_SOURCE_DIR'),
+    });
 
     log.trace(`展开 CMakeLists:${pkg}, C++ 节点 ${cppNodes.length} 个, Python 脚本 ${spec.pythonScriptPaths.length} 个, 模块安装 ${spec.enablePythonModule}`);
 
@@ -107,28 +131,37 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 头注释(按实际内容动态描述)
     lines.push(
         '# ============================================================',
-        `# ${pkg}/CMakeLists.txt: 示范包 (ament_cmake) 的构建脚本`,
-        '# Purpose: defines how CMake builds and installs',
+        T.headerTitle,
+        T.headerPurpose,
     );
     if (hasCpp) {
-        lines.push('# Contents: C++ nodes - compiled via add_executable, installed to lib/<pkg>/ via install(TARGETS) for ros2 run');
+        lines.push(T.contentsCpp);
     }
     if (spec.enablePythonModule) {
-        lines.push('# Contents: Python modules - installed as importable modules via ament_python_install_package (requires <pkg>/__init__.py)');
+        lines.push(T.contentsPyModule);
     }
     if (hasScripts) {
-        lines.push('# Contents: Python scripts - installed to lib/<pkg>/ via install(PROGRAMS); the command name keeps .py (ros2 run pkg name.py)');
+        lines.push(T.contentsPyScripts);
     }
     lines.push(
         '# ============================================================',
         '',
-        `# 最低 CMake 版本 (${CMAKE_MIN_VERSION})`,
+        T.minVersionComment,
         `cmake_minimum_required(VERSION ${CMAKE_MIN_VERSION})`,
         '',
-        `# 项目名 (与 package.xml 的 <name> 一致)`,
+        T.projectNameComment,
         `project(${pkg})`,
         '',
-        '# ---- Compile options: enable warnings ----',
+        // C++ 标准锁定(2026-10-13):guard 形态尊重外部 -DCMAKE_CXX_STANDARD 覆盖;值按发行版分派注入
+        // (教学注释 2026-10-14 入 L10N 表——27952df 曾硬编码英文绕过模板注释体系,中文 UI 下全文件唯它混排)
+        T.cxxStandardGuard,
+        T.cxxStandardOverride,
+        'if(NOT CMAKE_CXX_STANDARD)',
+        `  set(CMAKE_CXX_STANDARD ${spec.cxxStandard ?? "17"})`,
+        '  set(CMAKE_CXX_STANDARD_REQUIRED ON)',
+        'endif()',
+        '',
+        T.compileOptions,
         'if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")',
         '  add_compile_options(-Wall -Wextra -Wpedantic)',
         'endif()',
@@ -138,22 +171,22 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 依赖段: 真实生效的 find_package(分模块激活)
     lines.push(
         '########################################',
-        '## Dependency lookup (mirrors <depend> in package.xml) ##',
+        T.depBanner,
         '########################################',
         '',
-        '## ament build system (required by every ament_cmake package)',
+        T.depAment,
         'find_package(ament_cmake REQUIRED)',
         '',
-        '## ROS 2 C++ client library (required by C++ nodes)',
+        T.depRclcpp,
         'find_package(rclcpp REQUIRED)',
         '',
-        '## Python client library (import rclpy is guaranteed at runtime; find_package is a build-time check)',
+        T.depRclpy,
         spec.enableRclpy ? 'find_package(rclpy REQUIRED)' : '# find_package(rclpy REQUIRED)',
         '',
-        '## Provides the ament_python_install_package macro (Python module install)',
+        T.depPyModule,
         spec.enablePythonModule ? 'find_package(ament_cmake_python REQUIRED)' : '# find_package(ament_cmake_python REQUIRED)',
         '',
-        '## Standard message types (enable when using std_msgs)',
+        T.depStdMsgs,
         stdMsgsEnabled ? 'find_package(std_msgs REQUIRED)' : '# find_package(std_msgs REQUIRED)',
     );
     // 真实生效的额外依赖 find_package: 只看 build+buildtool 消费形态(C1 depend / C2 buildtool)
@@ -170,19 +203,19 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 直观示例块: 以后加消息/接口类依赖怎么找(取消注释 + 换包名)
     lines.push(
         '',
-        '# ----- Example: when more external packages are needed (uncomment; substitute real package/target names) -----',
+        T.exampleMoreDeps,
         '# find_package(geometry_msgs REQUIRED)',
-        '# ament_target_dependencies(<target> geometry_msgs)   # message packages generate code via rosidl and export like ordinary libraries',
-        '# Tip: runtime-only dependencies declared as <exec_depend> (launch_ros/turtlesim etc.) do not need find_package',
+        T.exampleDepMsgPkg,
+        T.exampleDepTip,
         '',
     );
 
     // 纯 Python 运行依赖注记(不 find_package; 供包内 Python 侧 import, package.xml 以 <exec_depend> 声明)
     if ((spec.pythonOnlyDeps?.length ?? 0) > 0) {
         lines.push(
-            '## Pure-Python runtime dependencies (no CMake export; Python-side import only - no find_package needed or possible):',
+            T.pyOnlyDepsTitle,
             `##   ${spec.pythonOnlyDeps!.join(', ')}`,
-            '## (already declared as <exec_depend> in package.xml; only Python code in the package imports them - the C++ side is unaffected)',
+            T.pyOnlyDepsNote,
             '',
         );
     }
@@ -190,10 +223,10 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 构建段: 真实代码(节点编译 + 官方默认宏)
     lines.push(
         '###########',
-        '## Build ##',
+        T.buildBanner,
         '###########',
         '',
-        '## Build the minimal executable (C++ node)',
+        T.buildMinExe,
     );
     for (const n of cppNodes) {
         lines.push(`add_executable(${n.node} src/${n.file}.cpp)`);
@@ -203,7 +236,7 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     }
     lines.push(
         '',
-        '## Attach dependencies per target: one line for include + link (works with both modern target exports and legacy variable exports)',
+        T.buildAttachDeps,
     );
     for (const n of cppNodes) {
         lines.push(`ament_target_dependencies(${n.node} ${depListStr})`);
@@ -214,35 +247,35 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 直观示例块: 加一个"new node"只需三行(取消注释)
     lines.push(
         '',
-        '# ----- Example: three lines to add another C++ node (just uncomment) -----',
+        T.addNodeExample,
         `# add_executable(${SAMPLE_EXE_NAME} src/${SAMPLE_EXE_NAME}.cpp)`,
         `# ament_target_dependencies(${SAMPLE_EXE_NAME} ${depListStr})`,
-        `# 还应在下方 "install" 段的 install(TARGETS ...) 里一并列出 ${SAMPLE_EXE_NAME}`,
+        T.addNodeHint,
         '',
     );
 
     // 直观示例块: 在本包"definition"新接口(msg/srv/action) —— 重实践: 独立成包一句 + 严重错误一条简注, 不展开机制
     lines.push(
         '####################################################',
-        '## Custom message/service/action interface generation (msg / srv / action) ##',
+        T.ifaceBanner,
         '####################################################',
         '',
-        '# Interfaces belong in a dedicated CMake package (interfaces can only be defined in CMake packages; a dedicated package makes them easy to share)',
-        '#   add <buildtool_depend>rosidl_default_generators</buildtool_depend> to package.xml',
+        T.ifaceDedicated,
+        T.ifaceXmlAdd,
         '#               + <exec_depend>rosidl_default_runtime</exec_depend>',
         '#               + <member_of_group>rosidl_interface_packages</member_of_group>',
-        '#   CMakeLists usage (uncomment and substitute your .msg/.srv files):',
+        T.ifaceUsage,
         '# find_package(rosidl_default_generators REQUIRED)',
         `# rosidl_generate_interfaces(${PN}`,
         '#   "msg/MyMsg.msg"',
         '#   "srv/MySrv.srv"',
-        '#   DEPENDENCIES std_msgs      # <- external interface packages referenced by your .msg/.srv go here (propagated automatically)',
+        T.ifaceDeps,
         '# )',
         '# ament_export_dependencies(rosidl_default_runtime)',
         '#',
-        '# Note: if this package also installs a same-named Python module via ament_python_install_package, the build fails outright',
-        '#       (rosidl generates Python code with the same name) - do not put interface definitions and Python module installs in the same package',
-        '# If this package only *uses* an interface package (e.g. std_msgs): find_package it and add the name to ament_target_dependencies above',
+        T.ifaceConflict,
+        T.ifaceConflictWhy,
+        T.ifaceUseOnly,
         '',
     );
 
@@ -250,63 +283,63 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     if (doubleLayout) {
         lines.push(
             '####################################################',
-            '## Export headers/libraries (for others to #include / link) ##',
+            T.exportBanner,
             '####################################################',
             '',
-            'Headers install in a two-level layout (consistent with system packages like rclcpp/std_msgs):',
-            '#   source include/<pkg>/x.hpp -> installed <prefix>/include/<pkg>/<pkg>/x.hpp',
-            '#   consumers add -I <prefix>/include/<pkg> and keep writing #include <pkg>/x.hpp',
-            '#   Three places must agree: the export root (ament_export_include_directories) and INSTALL_INTERFACE both use include/<pkg>;',
-            '#                 the install DESTINATION adds one package-name level under the export root = include/<pkg>/<pkg>',
-            '#   Any mismatch still compiles this package; the error surfaces downstream (headers not found at build/compile time)',
-            '# (1) Header-only library: install + declare, two lines',
+            T.headersTwoLevel,
+            T.twoLevelSource,
+            T.twoLevelConsumer,
+            T.twoLevelAgree,
+            T.twoLevelDest,
+            T.mismatchNote,
+            T.headerOnly,
             `# install(DIRECTORY include/${PN}/ DESTINATION include/${PN}/${PN})`,
             `# ament_export_include_directories(include/${PN})`,
             '#',
-            '# (2) Real library with .cpp files: additionally "build the library + install with EXPORT + declare via export_targets"; the EXPORT name must match on both sides',
+            T.realLibrary,
             `# add_library(${PN} SHARED src/my_class.cpp)`,
             `# target_include_directories(${PN} PUBLIC`,
-            `#   $<BUILD_INTERFACE:${cm('CMAKE_CURRENT_SOURCE_DIR')}/include>   # 本包自编译走源码 include`,
-            `#   $<INSTALL_INTERFACE:include/${PN}>   # 导出后消费方 -I 的根, 与导出根同为 include/<包名>`,
+            `#   $<BUILD_INTERFACE:${cm('CMAKE_CURRENT_SOURCE_DIR')}/include>   ${T.buildInterfaceComment}`,
+            `#   $<INSTALL_INTERFACE:include/${PN}>   ${T.installInterfaceCommentDouble}`,
             '# )',
             `# install(TARGETS ${PN} EXPORT export_${PN}`,
-            '#   ARCHIVE DESTINATION lib      # static libraries',
-            '#   LIBRARY DESTINATION lib      # shared libraries .so -> lib/ root',
-            '#   RUNTIME DESTINATION bin)     # executables/.dll',
+            T.archiveDest,
+            T.libraryDest,
+            T.runtimeDest,
             `# ament_export_targets(export_${PN})`,
             '#',
-            "# For this package's nodes to use its own library: link by bare name (the live target is in the same CMakeLists)",
+            T.linkOwnLibrary,
             '# target_link_libraries(<node> ' + PN + ')',
             '',
         );
     } else {
         lines.push(
             '####################################################',
-            '## Export headers/libraries (for others to #include / link) ##',
+            T.exportBanner,
             '####################################################',
             '',
-            'Headers install in a single-level layout (consistent with system packages like rclcpp/std_msgs):',
-            '#   source include/<pkg>/x.hpp -> installed <prefix>/include/<pkg>/x.hpp',
-            '#   consumers add -I <prefix>/include and keep writing #include <pkg>/x.hpp',
-            '#   Two places must agree: the export root (ament_export_include_directories) and INSTALL_INTERFACE both use include',
-            '#   Any mismatch still compiles this package; the error surfaces downstream (headers not found at build/compile time)',
-            '# (1) Header-only library: install + declare, two lines',
+            T.headersSingleLevel,
+            T.singleSource,
+            T.singleConsumer,
+            T.singleAgree,
+            T.mismatchNote,
+            T.headerOnly,
             `# install(DIRECTORY include/${PN}/ DESTINATION include)`,
             '# ament_export_include_directories(include)',
             '#',
-            '# (2) Real library with .cpp files: additionally "build the library + install with EXPORT + declare via export_targets"; the EXPORT name must match on both sides',
+            T.realLibrary,
             `# add_library(${PN} SHARED src/my_class.cpp)`,
             `# target_include_directories(${PN} PUBLIC`,
-            `#   $<BUILD_INTERFACE:${cm('CMAKE_CURRENT_SOURCE_DIR')}/include>   # 本包自编译走源码 include`,
-            "#   $<INSTALL_INTERFACE:include>   # the consumer's -I root after export; same as the export root: include",
+            `#   $<BUILD_INTERFACE:${cm('CMAKE_CURRENT_SOURCE_DIR')}/include>   ${T.buildInterfaceComment}`,
+            '#   $<INSTALL_INTERFACE:include>   ' + T.installInterfaceCommentSingle,
             '# )',
             `# install(TARGETS ${PN} EXPORT export_${PN}`,
-            '#   ARCHIVE DESTINATION lib      # static libraries',
-            '#   LIBRARY DESTINATION lib      # shared libraries .so -> lib/ root',
-            '#   RUNTIME DESTINATION bin)     # executables/.dll',
+            T.archiveDest,
+            T.libraryDest,
+            T.runtimeDest,
             `# ament_export_targets(export_${PN})`,
             '#',
-            "# For this package's nodes to use its own library: link by bare name (the live target is in the same CMakeLists)",
+            T.linkOwnLibrary,
             '# target_link_libraries(<node> ' + PN + ')',
             '',
         );
@@ -315,12 +348,12 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // Python 模块段: 真实代码(分模块激活)
     lines.push(
         '########################################',
-        '## Python module installation (for import reuse) ##',
+        T.pyModuleBanner,
         '########################################',
         '',
-        `## 将 ${pkg}/ 目录安装为可 import 的 Python 模块`,
-        `## 落点由本宏按构建机环境自动解析, 无需手动指定`,
-        `## 约束: ${pkg}/__init__.py 必须存在, 否则配置期直接报错`,
+        T.pyModuleInstall,
+        T.pyModuleDest,
+        T.pyModuleReq,
         spec.enablePythonModule ? `ament_python_install_package(${PN})` : `# ament_python_install_package(${PN})`,
         '',
     );
@@ -328,10 +361,10 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 安装段: 真实代码(TARGETS / PROGRAMS) + 注释示例(DIRECTORY)
     lines.push(
         '#############',
-        '## Install ##',
+        T.installBanner,
         '#############',
         '',
-        '## Build artifacts (executables/libraries) -> lib/<pkg>/, located by ros2 run',
+        T.installArtifacts,
     );
     if (hasCpp) {
         lines.push(
@@ -346,8 +379,8 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     }
     lines.push(
         '',
-        '## Ready-made executable scripts (Python .py etc.) -> lib/<pkg>/ (shebang kept; the .py suffix stays in the ros2 run command name)',
-        '## Executable bit: set by CMake on copy install; symlink install links to the source file, which must have the executable bit itself or it is silently skipped',
+        T.installScripts,
+        T.execBitNote,
     );
     if (hasScripts) {
         for (const sp of spec.pythonScriptPaths) {
@@ -365,11 +398,11 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 直观示例块: launch / 资源目录 → share/<包名>/ (ros2 launch 在 share 按文件名找)
     lines.push(
         '',
-        '## DIRECTORY: installs a whole directory (recursive copy, no compilation)',
-        '## For: launch/ -> share/<pkg>/; ros2 launch <pkg> <file> looks the file up by name inside share/<pkg>/',
+        T.dirBanner,
+        T.dirLaunch,
         `# install(DIRECTORY launch`,
         `#   DESTINATION share/${PN})`,
-        '## Similarly install resource dirs like urdf/ config/ (nodes/tools usually locate them via get_package_share_directory(<pkg>))',
+        T.dirResource,
         '# install(DIRECTORY urdf',
         `#   DESTINATION share/${PN})`,
         '',
@@ -377,20 +410,20 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // include 安装示例: 与头文件块同一布局分派(文本自身版本中立)
     if (doubleLayout) {
         lines.push(
-            '## DIRECTORY: installs a whole directory (recursive copy, no compilation)',
-            '## For: include/ -> include/<pkg>/<pkg>/ (two-level layout; export root / INSTALL_INTERFACE = include/<pkg>,',
-            '##        the install destination gains one more package-name level - matching the export example block above)',
+            T.dirBanner,
+            T.dirIncludeTwo,
+            T.dirIncludeTwoMore,
             `# install(DIRECTORY include/${PN}/`,
             `#   DESTINATION include/${PN}/${PN})`,
             '',
         );
     } else {
         lines.push(
-            '## DIRECTORY: installs a whole directory (recursive copy, no compilation)',
-            '## For: include/ -> include/<pkg>/ (single-level layout; export root / INSTALL_INTERFACE = include,',
-            '##        matching the export example block above)',
+            T.dirBanner,
+            T.dirIncludeOne,
+            T.dirIncludeOneMore,
             `# install(DIRECTORY include/${PN}/`,
-            `#   DESTINATION include)`,
+            '#   DESTINATION include)',
             '',
         );
     }
@@ -398,21 +431,21 @@ export function renderCmakeLists(pkg: string, spec: CmakeSpec): string {
     // 测试段(注释态, 直观块)
     lines.push(
         '#############',
-        '## Test ##',
+        T.testBanner,
         '#############',
         '',
-        '## colcon build only builds and does not run tests; run tests with colcon test (summarize results with colcon test-result)',
-        '## Enable linting: (1) uncomment below (2) uncomment the two lint test_depend entries in package.xml (both required; lint packages must be installed)',
+        T.testColcon,
+        T.testLintEnable,
         '# if(BUILD_TESTING)',
         '#   find_package(ament_lint_auto REQUIRED)',
-        '#   # skip the copyright check (while no copyright headers yet; re-comment this line once all sources have headers)',
+        T.testSkipCopyright,
         '#   set(ament_cmake_copyright_FOUND TRUE)',
-        '#   # skip cpplint (it only works inside a git repository)',
+        T.testSkipCpplint,
         '#   set(ament_cmake_cpplint_FOUND TRUE)',
         '#   ament_lint_auto_find_test_dependencies()',
         '# endif()',
         '',
-        '## Declare the package configured (required at the end of every ament_cmake package)',
+        T.amentPackage,
         'ament_package()',
         '',
     );

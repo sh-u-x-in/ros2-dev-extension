@@ -27,6 +27,7 @@ All settings registered by the extension live under the `ROS2` section: 22 keys 
 | Setting | Description |
 |---|---|
 | ROS2.run.shareSpec | ros2 run command template mechanism (factory = `ros2 run ${pkg} ${executable} ${0}`) |
+| ROS2.run.staleWarning | Warn (non-blocking toast with a "Don't show again" button) when the installed copy is older than the source file on Ctrl+F10 run/launch |
 | ROS2.launch.shareSpec | ros2 launch command template mechanism (factory = `ros2 launch ${pkg} ${launch_file} ${0}`) |
 
 **Message Interfaces**
@@ -46,12 +47,17 @@ All settings registered by the extension live under the `ROS2` section: 22 keys 
 | ROS2.search.followSymlinks | Whether directory searches follow symbolic links (off by default) |
 | ROS2.search.walkTimeouts | Per-search-type timeout/depth overrides |
 | ROS2.packages.refreshMs | Forced background rescan period (ms) for the package list (0 = disabled; applies automatically) |
+| ROS2.packages.userIndex | User-supplied package index for the dependency picker: key = package name, value = "[py\|]<description>" (the optional "py" prefix forces the [pure Python package] badge; the description replaces the row's when the name matches; unmatched entries stay hidden) |
 
 **IntelliSense**
 
 | Setting | Description |
 |---|---|
 | ROS2.ide.intellisenseEngine | Engine for automatic include-entry maintenance: auto / cpptools / clangd / both / none |
+| ROS2.ide.entryOverrides.clangd | Replacement table for entries generated into .clangd: key = exact Add token (without "- "), value = replacement used verbatim, empty string = remove. Chained to a fixed point in one sync; cycles drop the entry. |
+| ROS2.ide.entryOverrides.cpptools | Replacement table for includePath entries generated into c_cpp_properties.json: key = exact entry string (with ${workspaceFolder} / trailing "**"), value = replacement verbatim, empty string = remove. Same chaining semantics. |
+| ROS2.ide.entryOverrides.python | Replacement table for directories generated into both extraPaths lists: key = exact directory string, value = replacement verbatim, empty string = remove. Same chaining semantics. |
+| ROS2.ide.clangdTidy | Take over .clangd ordering (default off): re-sort managed entries into canonical group order and re-anchor the localized group comments on every sync; your own rows keep relative order at the end of the Add block. One-way effect. |
 
 **UI**
 
@@ -59,6 +65,7 @@ All settings registered by the extension live under the `ROS2` section: 22 keys 
 |---|---|
 | ROS2.ui.autoShowOutput | Automatically open the ROS 2 output channel when a warning or error occurs |
 | ROS2.ui.showWelcomeOnStartup | Show the welcome page after install or update |
+| ROS2.ui.showLeftovers | Show leftover entries in the Package Contents view: files still under install/ but no longer declared by the latest build (renamed/removed executables, commented-out setup.py entries). Hidden by default; toggle with the eye button in the view title bar |
 
 `settings.json` example:
 

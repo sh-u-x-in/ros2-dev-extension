@@ -48,6 +48,9 @@ run/ → ros2/api(composeApi.rosTaskRunner:只收现成 argv)
 `ros2/` 不反向依赖本域(注册在 extension.ts 组装,命令 id 经 host/commands 单源)。
 
 ## 修改记录
+| 2026-10-14 | **陈旧警告面改版:状态栏 → 非模态警告气泡 + 「不再显示」按钮(用户裁定,推翻 10-13 选型)**:用户实机观察到非模态气泡不点按钮也会宿主自动收起(实测约 12 秒、不积累),原"带按钮 toast 会钉住"顾虑不成立;`notifyStaleIfNeeded` 展示面 `setStatusBarMessage(msg,4000)` → `showWarningMessage(msg, STALE_MUTE_LABEL)`(void 发射不阻塞,判定链/冷却/触发链零改动);按钮 = 写 `ROS2.run.staleWarning=false` 永久静默(有工作区写工作区层否则用户层,照 preflight setPreflightMode 先例;`STALE_MUTE_LABEL` 常量同源 t() 照 PREFLIGHT_MUTE_LABEL 先例);`STALE_STATUSBAR_TIMEOUT_MS` 常量废除(测试断言同步删)+ `STALE_MUTE_LABEL` 非空断言;nls×2/docs×2"状态栏 4 秒"措辞同步;l10n 册 +3 键(Don't show again/写失败/写回日志;workspace/user 键既有复用) |
+| 2026-10-13 18:49 | **陈旧附加警告(用户裁定「附加不阻碍/状态栏 4 秒/30 秒冷却」)**:源比安装产物新时,Ctrl+F10 运行/启动**照常执行** + 状态栏 4 秒提醒(本次运行可能不含最新修改)——警告是最后闸门的纯附言,潜台词"可以运行";①RunTarget 富集 installPath/srcPath(ownersOfSource 内 lookup 走 O(1) 缓存索引);②判定/冷却收纯函数 isStale(双存在且源严格更新;symlink 穿透等时零误报;源缺失不警)/shouldNotifyStale(30s 窗口);③非阻塞面 = setStatusBarMessage 4s(带按钮 toast 会钉住、无按钮时长不可控,均不满足固定消退);④设置键 ROS2.run.staleWarning(默认开,刻意测试旧安装可关;package.json/nls×2/docs×2 同步);⑤splitOwnerReadiness 泛型化透传属主额外字段;30s 同目标冷却(会话级);run-readiness.test +4 例(isStale/冷却/键名锁/静默路径),1345 用例 0 失败 |
+| 2026-10-13 09:40 | **一键运行安装侧就绪预检(方案甲,用户裁定)**:根因 = 跳转表全部来自 build 侧(有编译无安装也放行,侧边栏 = install 侧观察却不显示,两套证据矛盾,用户实测确认);ownersOfSource 接口改分层结果 `{runnable, compiledNotInstalled}`,就绪口径 = 侧边栏同一行(lib 区 installed 可执行行命中,三种未就绪子 case 全落坑:无安装规则/missing/非可执行);中心未就绪(null)保守全部放行(判不了不拦);smart-run 双警告:①0 属主=未编译(既有)②属主全未就绪=已编译未安装(新警告,进 l10n 册 +1 键);就绪拆分为纯函数 splitOwnerReadiness 可无头测试(新增 run-readiness.test.ts 6 例);resolver/侧边栏零改动 |
 | 2026-09-30 18:56 | 一键运行修复:run 键位 when 排除 .launch.*(消双命中);launchActiveEditor 加 basename 兜底匹配(无源行可用) |
 | 2026-09-30 01:24 | 一键运行:RunDataSource 增 ownersOfSource/launchFileOfSource(源→安装侧目标);run/launch handler 接键位实参;smart-run/launch 增 ActiveEditor 入口(0 属主提示先构建) |
 

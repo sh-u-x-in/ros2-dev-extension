@@ -35,6 +35,9 @@ import { renderCmakeLists } from '../templates/cmake';
 import { renderAmentCmakePackageXml } from '../templates/package-xml';
 import { cppNodeSource } from '../templates/cpp-node';
 import { pyNodeSource } from '../templates/py-node';
+import { resolveMiscStrings } from '../../../../../l10n/templates/index';
+import type { TemplateCommentLang } from '../../../../../l10n/templates/index';
+import type { CxxStandard } from '../../config/gen/distro-templates';
 
 // —— 公共 API 门面(符号自新模块转发, 兼容既有 import 路径) ——
 export { validatePackageName, isReservedFileName, NAME_MAX_LENGTH, parseFileBaseList, validateFileBaseNamesInput, toNodeName, disambiguateNodeNames } from '../naming/names';
@@ -73,6 +76,19 @@ export interface CppPackageConfig {
      * 两个变体的生成文本都版本中立、不携带发行版名与"约定"概念。缺省 double。
      */
     includeLayout?: "double" | "single";
+    /**
+     * C++ 标准锁定(2026-10-13,用户裁定):由交互层按 env.ROS_DISTRO 经 resolveCxxStandard 分派
+     * (dashing~foxy = 14 / galactic~kilted = 17 / lyrical = 20 / 未知与 rolling 缺省 17);
+     * 经 guard 块写入 CMakeLists(if NOT → set + REQUIRED),外部 -DCMAKE_CXX_STANDARD 可覆盖;
+     * 与 IntelliSense 栈(c++20)的错位方向安全(解析 ≥ 编译)。缺省 "17"。
+     */
+    cxxStandard?: CxxStandard;
+    /**
+     * 生成物教学注释语种(2026-10-12 L10N,用户裁定「路线 2」):交互层经
+     * normalizeCommentLang(vscode.env.language) 归一后传入;缺省 "en"(英语源,
+     * 与历史英文输出逐字节一致)。译文表在 l10n/templates/,生成物单语不混排。
+     */
+    commentLang?: TemplateCommentLang;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,17 +174,19 @@ export function generateCppPackageFiles(config: CppPackageConfig): GeneratedFile
     log.debug(l10n.t('C++ package file manifest: {0} ({1})', config.packageName, config.kind));
     const pkg = config.packageName;
     const spec = resolveSpec(config);
+    // 生成物教学注释语种(缺省 en = 英语源;译文表见 l10n/templates/)
+    const lang: TemplateCommentLang = config.commentLang ?? "en";
     const files: GeneratedFile[] = [];
 
-    files.push({ path: 'CMakeLists.txt', content: renderCmakeLists(pkg, { ...spec, includeLayout: config.includeLayout }) });
-    files.push({ path: 'package.xml', content: renderAmentCmakePackageXml(pkg, spec) });
+    files.push({ path: 'CMakeLists.txt', content: renderCmakeLists(pkg, { ...spec, includeLayout: config.includeLayout, cxxStandard: config.cxxStandard }, lang) });
+    files.push({ path: 'package.xml', content: renderAmentCmakePackageXml(pkg, spec, lang) });
     // 标准目录骨架: include/<pkg>/ 恒存在 (空目录, 不写占位文件)
     files.push({ path: `include/${pkg}/`, content: '', directory: true });
 
     if (spec.cppNodes.length > 0) {
         // 循环:为每个 C++ 节点生成源文件 (文件名用 file 基名, 节点名用 node)
         for (const n of spec.cppNodes) {
-            files.push({ path: `src/${n.file}.cpp`, content: cppNodeSource(pkg, n.node) });
+            files.push({ path: `src/${n.file}.cpp`, content: cppNodeSource(pkg, n.node, lang) });
         }
     } else {
         // src/ 恒存在 (0 节点时为空目录, 不写占位文件)
@@ -177,17 +195,19 @@ export function generateCppPackageFiles(config: CppPackageConfig): GeneratedFile
 
     if (config.kind === 'mixed') {
         // 混合包: 模块安装必需 __init__.py (即使未生成节点文件)
-        files.push({ path: `${pkg}/__init__.py`, content: `"""${pkg} 的 Python 模块 (供 import 复用)."""\n` });
+        files.push({ path: `${pkg}/__init__.py`, content: `${resolveMiscStrings(lang, { pkg }).initPyDocstring}\n` });
     }
     // 循环:为每个 Python 节点生成脚本/模块文件 (文件名用 file 基名, 节点名用 node)
     // exec: 这些文件都经 install(PROGRAMS) 运行, 需要可执行位 (symlink 安装下源无 +x 会被 ros2 run 漏掉)
+    // directExec:true —— 两类文件都经 install(PROGRAMS) 直装 lib/<pkg>/ 被 ros2 run **直接执行**,
+    // 必须写 shebang(Linux 内核靠它选解释器;2026-10-12 方案 B 用户裁定)
     for (const py of spec.pythonNodes) {
         if (config.kind === 'mixed') {
             // 模块形式: Python 文件位于包目录内 (file === node, 必须为标识符)
-            files.push({ path: `${pkg}/${py.file}.py`, content: pyNodeSource(pkg, py.node), exec: true });
+            files.push({ path: `${pkg}/${py.file}.py`, content: pyNodeSource(pkg, py.node, lang, { directExec: true }), exec: true });
         } else {
             // 脚本形式: 位于 scripts/, 供 PROGRAMS 安装 (file 可含连字符)
-            files.push({ path: `scripts/${py.file}.py`, content: pyNodeSource(pkg, py.node), exec: true });
+            files.push({ path: `scripts/${py.file}.py`, content: pyNodeSource(pkg, py.node, lang, { directExec: true }), exec: true });
         }
     }
 

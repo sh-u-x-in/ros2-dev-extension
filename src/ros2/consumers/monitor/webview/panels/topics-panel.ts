@@ -42,14 +42,17 @@ export function renderTopicsList(topics: any[]): void {
         action.innerHTML = ICON_EXEC;
         attachHoverTip(action, t("Starts ros2 topic echo in a regular integrated terminal (persistent; edit and rerun)"));
         action.addEventListener("click", () => {
-            vscode.postMessage({ command: "subscribeTopic", topic: topic.name });
+            // 2026-10-13:带数据类型——无发布者时 echo 发现不到类型会瞬间退出,带类型则订阅先起、发布者后上线即收
+            vscode.postMessage({ command: "subscribeTopic", topic: topic.name, topicType: topic.type });
         });
         const copyTopic = document.createElement("span");
         copyTopic.className = "param-open-file entry-action-copy";
         copyTopic.innerHTML = ICON_COPY;
-        attachHoverTip(copyTopic, t("Copy the subscribe command: ros2 topic echo ") + topic.name);
+        // 2026-10-15:复制文本与订阅按钮同口径——类型已知时带上(无发布者时无类型 echo 瞬间退出,带类型订阅先起)
+        const copyCmd = topic.type ? `ros2 topic echo ${topic.name} ${topic.type}` : `ros2 topic echo ${topic.name}`;
+        attachHoverTip(copyTopic, t("Copy the subscribe command: ") + copyCmd);
         copyTopic.addEventListener("click", () => {
-            copyCommandToClipboard(copyTopic, `ros2 topic echo ${topic.name}`);
+            copyCommandToClipboard(copyTopic, copyCmd);
         });
         row.appendChild(name);
         row.appendChild(type);

@@ -10,9 +10,15 @@
  * 扩展位(后续"Generated-package content upgrade"调整入口):
  *   - 顶部常量表: 元数据经 ./meta PKG_META 引用(变量替换), lint 测试清单结构化;
  *   - 后续如需调整 setup.py/setup.cfg/test 文件, 只改本文件。
+ *
+ * 教学注释 L10N(2026-10-12):setup.py/setup.cfg 的教学注释以稳定 ID 查 l10n/templates 表
+ * (en 源 + 各语种译文),按 `lang` 出单语生成物;缺省 "en" 时注释为英文源(历史中文由
+ * zh-cn 表承载),代码行逐字节不变;5 个官方 lint 测试为上游原文,不译不入表。
  */
 
 import { PKG_META } from './meta';
+import { resolvePySetupStrings } from '../../../../../l10n/templates/index';
+import type { TemplateCommentLang } from '../../../../../l10n/templates/index';
 
 /** 纯 Python 包描述(仅 setup.py 元数据用; package.xml 描述在 package-xml.ts 各自内联) */
 export const SETUP_DESCRIPTION = 'Pure-Python demo package (ament_python)';
@@ -22,23 +28,25 @@ export const SETUP_DESCRIPTION = 'Pure-Python demo package (ament_python)';
  * @param pkg 包名(与 package.xml <name> 及 <pkg>/ 模块目录一致)
  * @param nodes 示范节点模块名列表(空 = 无入口, 保留示例注释)
  */
-export function renderSetupPy(pkg: string, nodes: string[]): string {
+export function renderSetupPy(pkg: string, nodes: string[], lang: TemplateCommentLang = "en"): string {
+    // 教学注释表(按语种; 缺省 en,代码行逐字节不变)
+    const T = resolvePySetupStrings(lang, { pkg });
     const entries = nodes.length === 0
         ? '        '
         : nodes.map((n) => `            '${n} = ${pkg}.${n}:main',`).join('\n');
     return `# ============================================================
-# ${pkg}/setup.py: 纯 Python 包 (ament_python) 的构建脚本
-# 作用: 定义 setuptools 的打包与安装方式
-# Note: ament_python 包无 CMakeLists.txt, 构建入口为 setup.py
+${T.setupTitle}
+${T.setupPurpose}
+${T.setupNoCmake}
 # ============================================================
 
 from setuptools import find_packages, setup
 
 ########################################
-## 基础信息 ##
+${T.secBasic}
 ########################################
 
-# 包名 (与 package.xml 的 <name> 一致)
+${T.pkgNameComment}
 package_name = '${pkg}'
 
 setup(
@@ -46,45 +54,45 @@ setup(
     version='${PKG_META.version}',
 
     ########################################
-    ## 模块收集 ##
+    ${T.secCollect}
     ########################################
-    # 收集 ${pkg}/ 目录下的 Python 模块 (排除 test/ 测试目录; 无 __init__.py 的目录本就不算包)
+    ${T.collectComment}
     packages=find_packages(exclude=['test']),
 
     ########################################
-    ## 包内数据文件 (package_data) ##
+    ${T.secPkgData}
     ########################################
-    # 包内"non-.py"文件(类型标记/模板/json 等)默认不随包分发, 须在此显式声明;
-    # 落点 = site-packages/<pkg>/ (与代码同目录, import 体系内, importlib.resources 可读)。
-    # py.typed (PEP 561 类型标记): 必须显式声明才会随包安装;
-    #   显式声明跨 setuptools 版本无害, 一律显式最稳。
+    ${T.pkgDataComment1}
+    ${T.pkgDataComment2}
+    ${T.pyTypedComment1}
+    ${T.pyTypedComment2}
     package_data={
         package_name: ['py.typed'],
     },
 
     ########################################
-    ## 数据文件 ##
+    ${T.secDataFiles}
     ########################################
     data_files=[
-        # 1) ament 索引地图标记 (resource/${pkg} 空文件): 存在 → ros2 工具可定位本包前缀
+${T.amentIndexComment}
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
-        # 2) 安装 package.xml 至 share/<包名>/, 供 ros2 pkg/colcon/rosdep 等按约定路径读取
+${T.pkgXmlInstallComment}
         ('share/' + package_name, ['package.xml']),
     ],
 
     ########################################
-    ## 依赖 ##
+    ${T.secDeps}
     ########################################
-    # Python 安装依赖 (ROS 依赖在 package.xml 声明)
+    ${T.installRequiresComment}
     install_requires=['setuptools'],
-    # 测试依赖
+    ${T.testsRequireComment}
     tests_require=['pytest'],
 
     ########################################
-    ## 包元数据 ##
+    ${T.secMeta}
     ########################################
-    # zip_safe=False: 包内带数据/二进制/扩展时最稳 (zip 态下按 __file__ 相对定位读文件会失败)
+    ${T.zipSafeComment}
     zip_safe=False,
     maintainer='${PKG_META.maintainerName}',
     maintainer_email='${PKG_META.maintainerEmail}',
@@ -92,16 +100,16 @@ setup(
     license='${PKG_META.license}',
 
     ########################################
-    ## 节点可执行入口 ##
+    ${T.secEntry}
     ########################################
-    # console_scripts 定义命令名与模块函数入口的映射
-    # 格式: 'command name = module path.function name'
-    # 生成的命令装至 lib/${pkg}/ (由 setup.cfg 的 install_scripts 指定落点), 供 ros2 run 定位
+    ${T.consoleScriptsComment}
+    ${T.consoleFormatComment}
+    ${T.consoleLibComment}
     entry_points={
         'console_scripts': [
 ${entries}
         ],
-        # 新增节点示例 (按需追加):
+${T.addNodeExample}
         # 'node_name = ${pkg}.node_name:main',
     },
 )
@@ -109,10 +117,12 @@ ${entries}
 }
 
 /** setup.cfg(配合 setup.py 的打包配置; 指定可执行命令安装目录) */
-export function renderSetupCfg(pkg: string): string {
+export function renderSetupCfg(pkg: string, lang: TemplateCommentLang = "en"): string {
+    // 教学注释表(按语种)
+    const T = resolvePySetupStrings(lang, { pkg });
     return `# ============================================================
-# ${pkg}/setup.cfg: 配合 setup.py 的打包配置
-# 作用: 指定可执行命令的安装目录
+${T.cfgTitle}
+${T.cfgPurpose}
 # ============================================================
 
 [develop]

@@ -12,6 +12,7 @@
 import * as assert from 'assert';
 import { mergeDeps, validateFinal, excludeBuiltin } from '../../src/build-tool/package-service/create/deps/dep-merge';
 import { depAnnotation } from '../../src/build-tool/package-service/create/deps/dep-parse';
+import { parseUserIndexValue, descriptionOverrideOf, USER_INDEX_SETTING } from '../../src/build-tool/package-service/create/deps/dep-lang';
 
 describe('mergeDeps (勾选项 ∪ 自定义, 内置过滤 + 去重)', () => {
     it('勾选+自定义合并: 结果含并集且顺序稳定(勾选在前, 自定义在后)', () => {
@@ -88,5 +89,67 @@ describe('depAnnotation (QuickPick description 元信息标注, 纯文本)', () 
         assert.strictEqual(depAnnotation('rclcpp', 'cpp-only'), undefined);
         assert.strictEqual(depAnnotation('std_msgs', 'cpp-only'), undefined);
         assert.strictEqual(depAnnotation('nav_msgs', 'python'), undefined);
+    });
+});
+
+describe('parseUserIndexValue(用户补充索引 value 解析,2026-10-13)', () => {
+    it('py| 前缀 → 强制纯 Python 标注 + 描述为后文(可再含 |)', () => {
+        assert.deepStrictEqual(parseUserIndexValue('py|我的自定义包'), { py: true, description: '我的自定义包' });
+        assert.deepStrictEqual(parseUserIndexValue('PY|a|b'), { py: true, description: 'a|b' }, '前缀忽略大小写,描述可含 |');
+    });
+
+    it('cpp| 前缀 → 无强制标注,描述为后文', () => {
+        assert.deepStrictEqual(parseUserIndexValue('cpp|某些 C++ 包'), { py: false, description: '某些 C++ 包' });
+    });
+
+    it('非法前缀(osdcno|)→ 前缀直接丢弃,正常显示描述', () => {
+        assert.deepStrictEqual(parseUserIndexValue('osdcno|忘了怎么写'), { py: false, description: '忘了怎么写' });
+    });
+
+    it('无 | → 全值为描述,无强制标注(cpp 默认)', () => {
+        assert.deepStrictEqual(parseUserIndexValue('纯描述'), { py: false, description: '纯描述' });
+    });
+
+    it('空 value → 空描述', () => {
+        assert.deepStrictEqual(parseUserIndexValue(''), { py: false, description: '' });
+    });
+
+    it('转义:cpp 描述经 \\| 携带 | 字符,无分隔符 → 全句为描述', () => {
+        assert.deepStrictEqual(parseUserIndexValue('性能\\|延迟权衡'), { py: false, description: '性能|延迟权衡' });
+    });
+
+    it('转义:py 标注描述内同样生效;旧 leading-| 写法向后兼容', () => {
+        assert.deepStrictEqual(parseUserIndexValue('py|要点\\|备注'), { py: true, description: '要点|备注' });
+        assert.deepStrictEqual(parseUserIndexValue('|一段描述|一段描述'), { py: false, description: '一段描述|一段描述' });
+    });
+
+    it('转义扫描:仅未转义的 | 是分隔符(既有 osdcno| 丢弃行为不变)', () => {
+        assert.deepStrictEqual(parseUserIndexValue('osdcno|忘了怎么写'), { py: false, description: '忘了怎么写' });
+    });
+});
+
+describe('descriptionOverrideOf(按包名查覆盖,未命中 undefined)', () => {
+    const map = {
+        'my_pkg': 'py|我的自定义包',
+        'sys_pkg': '系统包描述覆盖',
+        'empty_pkg': '',
+    };
+
+    it('命中 → 解析结果', () => {
+        assert.deepStrictEqual(descriptionOverrideOf(map, 'my_pkg'), { py: true, description: '我的自定义包' });
+        assert.deepStrictEqual(descriptionOverrideOf(map, 'sys_pkg'), { py: false, description: '系统包描述覆盖' });
+    });
+
+    it('value 空串 → 清空描述(py=false)', () => {
+        assert.deepStrictEqual(descriptionOverrideOf(map, 'empty_pkg'), { py: false, description: '' });
+    });
+
+    it('未命中 → undefined(条目不显示的语义由调用方保证)', () => {
+        assert.strictEqual(descriptionOverrideOf(map, 'nope'), undefined);
+        assert.strictEqual(descriptionOverrideOf(undefined, 'my_pkg'), undefined);
+    });
+
+    it('键名锁:ROS2.packages.userIndex(照 preflight 键名锁先例)', () => {
+        assert.strictEqual(USER_INDEX_SETTING, 'packages.userIndex');
     });
 });

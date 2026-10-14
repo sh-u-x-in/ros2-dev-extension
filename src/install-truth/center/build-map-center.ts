@@ -26,7 +26,7 @@ import { FsLike, nodeFsLike } from "../shared/fs/primitives";
 import { BuildMapSnapshot, BuildPackage, JumpEntry, PackageAreas } from "../shared/models";
 import { pjoin } from "../shared/paths";
 import { locateBuildRoot } from "../scan/build-root";
-import { collectAreas } from "../scan/installed";
+import { collectAreas, synthesizeVanishedRows } from "../scan/installed";
 import { collectJumps } from "../scan/jumps";
 import { discoverBuildPackages, inferType, PKG_NAME_RE, readTraits } from "../scan/packages";
 
@@ -65,6 +65,7 @@ export async function buildBuildMapSnapshot(
     const { jumps, warnings } = await collectJumps(fs, ctx, packages, { includeUninstalled: true });
     // 安装内容解算(三区 + include):install 侧观察 + build 侧记录对账(README §2)
     const { areas, warnings: areaWarnings } = await collectAreas(fs, ctx, packages, jumps);
+    const buildTimes = await readBuildTimes(fs, ctx, packages);
     return {
         workspaceRoot: ctx.workspaceRoot,
         buildRoot: ctx.buildRoot,
@@ -72,11 +73,25 @@ export async function buildBuildMapSnapshot(
         packages,
         jumps,
         areas,
+        buildTimes,
         warnings: warnings.concat(areaWarnings),
         durationMs: now() - t0,
         builtAt: now(),
         reason,
     };
+}
+
+/**
+ * 包 → 最近一次构建时刻(colcon_build.rc mtime;缺失/非文件 = -1,展示层按无效丢弃)。
+ * 增量门本来就在逐包读这个值,这里只是把结果随快照带给展示层 —— 零新扫描。
+ */
+async function readBuildTimes(fs: FsLike, ctx: { buildRoot: string }, packages: Map<string, BuildPackage>): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (const name of Array.from(packages.keys()).sort()) {
+        const st = await fs.stat(pjoin(ctx.buildRoot, name, "colcon_build.rc"));
+        out.set(name, st !== undefined && st.kind === "file" ? st.mtimeMs : -1);
+    }
+    return out;
 }
 
 /**
@@ -520,7 +535,12 @@ export class BuildMapCenter {
                 jumps.set(n, v);
             }
             for (const [n, v] of a2) {
-                areas.set(n, v);
+                // 消失行合成(2026-10-14,用户裁定"install/ 下的东西消失就显示 missing"):链形态行
+                // (文件链/经目录链进入)被重扫后从观察中蒸发(如 ament_python 目录链行与 src 同存储,
+                // 删源即遍历不见,且无 per-file 清单可反向对账)→ 由上一版行合成 manifest-only 兜底,
+                // 避免"删源后整行蒸发"变成空白;源恢复 → 重新被观察 → 合成行自然消退
+                const vanished = synthesizeVanishedRows(prev.areas.get(n)?.files ?? [], v.files);
+                areas.set(n, vanished.length > 0 ? { ...v, files: [...v.files, ...vanished] } : v);
             }
             warnings.push(...w2, ...w3);
             for (const [n, v] of scanSet) {
@@ -535,6 +555,7 @@ export class BuildMapCenter {
             packages,
             jumps,
             areas,
+            buildTimes: rcNow, // 增量门逐包读过的 rc mtime,顺手带给展示层(纯展示,不参与指纹)
             warnings,
             durationMs: this.now() - t0,
             builtAt: this.now(),

@@ -182,7 +182,10 @@ describe('generatePythonPackageFiles', () => {
         assert.ok(node.content.includes('class DemoNode(Node)'));
         assert.ok(node.content.includes("super().__init__('talker')"));
         assert.ok(node.content.includes('my_pkg minimal demo node'));
-        assert.ok(node.content.includes('#!/usr/bin/env python3'));
+        // ament_python 模块经 console_scripts 入口点执行(包装器自带 shebang,模块是被 import 的)
+        // ⇒ 不写 shebang,以 docstring 开头(2026-10-12 方案 B 用户裁定)
+        assert.ok(!node.content.includes('#!/usr/bin/env python3'));
+        assert.ok(node.content.startsWith('"""my_pkg minimal demo node'));
     });
 
     it('空文件:resource / __init__.py / py.typed', () => {

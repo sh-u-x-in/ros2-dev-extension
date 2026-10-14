@@ -49,9 +49,10 @@ import {
     sourceFromRules,
     sourceFromRulesRef,
     suggestNames,
+    synthesizeVanishedRows,
 } from "../../src/install-truth/api";
-import type { BuildContext, BuildMapBuilder, BuildPackage, FsLike, JumpEntry, PackageAreas } from "../../src/install-truth/api";
-import { buildTree, fileContextValue, iconPlanOf, layoutOfViews, openTargetOf, runPayloadOf } from "../../src/sidebar/install-truth-tree";
+import type { AreaFile, BuildContext, BuildMapBuilder, BuildPackage, FsLike, JumpEntry, PackageAreas, SidebarRow } from "../../src/install-truth/api";
+import { buildTree, countLeftovers, fileContextValue, fileNodeOf, iconPlanOf, layoutOfViews, openTargetOf, rowStateStale, rowTooltip, runPayloadOf, srcLinkNote } from "../../src/sidebar/install-truth-tree";
 import type { TreeNode } from "../../src/sidebar/install-truth-tree";
 import type { SidebarPackageView } from "../../src/install-truth/api";
 
@@ -1447,15 +1448,15 @@ describe("简易侧边栏:树模型(纯函数,零 vscode)", () => {
         assert.ok(missing.tooltip!.indexOf("In install records but not seen") >= 0, "missing 必须在 hover 里说明原因");
     });
 
-    it("图标决策 iconPlanOf(2026-10-04):有 sourcePath 的文件行交给文件图标主题,missing/虚拟节点维持 codicon", () => {
+    it("图标决策 iconPlanOf(2026-10-04 立,2026-10-13 升级):正常行走文件图标主题;错误行分型异形+主题色;虚拟节点维持 codicon", () => {
         const tree = buildTree([view], "/ws");
         const libRow = tree[0].children![0].children![0]; // lib/sss,有 sourcePath
         assert.deepStrictEqual(iconPlanOf(libRow), { tag: "file", path: "/ws/src/iii/iii/sss.py" });
         const missing = tree[0].children![2].children![0].children![0]; // share/urdf/iii.urdf,missing
         assert.deepStrictEqual(
             iconPlanOf(missing),
-            { tag: "codicon", id: "warning" },
-            "missing 警示优先于类型图标(非 file/folder ThemeIcon 恒按 codicon 渲染,天然优先)"
+            { tag: "codicon", id: "error", color: "list.errorForeground" },
+            "A 产物丢失:2026-10-13 由 warning 升 error 红(丢产物最强提醒)"
         );
         // 虚拟节点(无磁盘路径字段)与消息行
         assert.deepStrictEqual(iconPlanOf(tree[0]), { tag: "codicon", id: "package" });
@@ -1467,6 +1468,120 @@ describe("简易侧边栏:树模型(纯函数,零 vscode)", () => {
             "目录行无图标(2026-10-04 用户裁定:文件行已是主题类型图标,codicon folder 夹在中间扎眼)"
         );
         assert.deepStrictEqual(iconPlanOf({ kind: "message", label: "x" }), { tag: "codicon", id: "info" });
+    });
+
+    it("错误行分型异形(2026-10-13 方案):B 悬空→unlink 红 / C 源失效→warning 琥珀,判定先于文件图标分支;三型行 description=⚠", () => {
+        const mk = (over: Partial<TreeNode>): TreeNode => ({ kind: "file", label: "n", ...over });
+        // B 悬空软链:sourcePath 存在也必须被 unlink 红覆盖(旧版因走文件图标分支漏标识)
+        const dangling = mk({ dangling: true, sourcePath: "/ws/src/iii/x.py" });
+        assert.deepStrictEqual(iconPlanOf(dangling), { tag: "codicon", id: "debug-disconnect", color: "list.errorForeground" });
+        // C 源失效:sourceMissing(装配层 fs 检查注入)→ warning 琥珀(形状换开,防与文件图标撞形)
+        const sourceMissing = mk({ sourceMissing: true, sourcePath: "/ws/src/iii/gone.py" });
+        assert.deepStrictEqual(
+            iconPlanOf(sourceMissing),
+            { tag: "codicon", id: "warning", color: "editorWarning.foreground" }
+        );
+        // 三型行(含 missing)description = 单符号 ⚠;正常行/d(source-unresolved)行不加
+        // fileNodeOf 收 DisplayRow(非 TreeNode):最小合法行 + 覆盖字段
+        const mkRow = (over: Record<string, unknown> = {}): Parameters<typeof fileNodeOf>[0] =>
+            ({ name: "n", status: "installed", installPath: "/i/n", library: false, generated: false, area: "lib", ...over } as Parameters<typeof fileNodeOf>[0]);
+        assert.strictEqual(fileNodeOf(mkRow({ status: "missing" })).description, "⚠");
+        assert.strictEqual(fileNodeOf(mkRow({ dangling: true })).description, "⚠");
+        assert.strictEqual(fileNodeOf(mkRow({ sourceMissing: true })).description, "⚠");
+        assert.strictEqual(fileNodeOf(mkRow()).description, undefined);
+        assert.strictEqual(fileNodeOf(mkRow({ status: "source-unresolved" })).description, undefined);
+        // fileNodeOf 透传 sourceMissing 进 TreeNode(供 iconPlanOf 消费)
+        assert.strictEqual(fileNodeOf(mkRow({ sourceMissing: true })).sourceMissing, true);
+    });
+
+    it("tooltip 软链文案三档化 + 软链行时间戳合并(2026-10-14,用户裁定:不是所有软链都改了立即生效)", () => {
+        const mk = (over: Record<string, unknown> = {}): Parameters<typeof rowTooltip>[0] =>
+            ({ name: "n", status: "installed", installPath: "/i/n", library: false, generated: false, area: "share", ...over } as Parameters<typeof rowTooltip>[0]);
+        // ① 接口定义(.msg/.srv/.action):消费物是 rosidl 生成代码 → 需重新构建,不再承诺"立即生效"
+        for (const n of ["Progress.action", "X.msg", "X.srv"]) {
+            assert.ok(srcLinkNote(mk({ name: n, linkDomain: "src" })).includes("rebuild"), n);
+            assert.ok(!srcLinkNote(mk({ name: n, linkDomain: "src" })).includes("immediately"), n);
+        }
+        // ② 头文件:消费在编译期 → 重新编译生效
+        assert.ok(srcLinkNote(mk({ name: "h.hpp", area: "include" })).includes("recompilation"));
+        // ③ 其余(py 源码/资源)运行时按原文照读 → 保留现文案
+        assert.ok(srcLinkNote(mk({ name: "n.py" })).includes("immediately"));
+        assert.ok(srcLinkNote(mk({ name: "r.yaml" })).includes("immediately"));
+        // ④ 软链形态行(自身链 linkDomain / 上游目录链 viaLinkDomain)install 与源同一文件 → 合并单行「Mtime」
+        const linkRow = rowTooltip(mk({ name: "a.action", linkDomain: "src", sourceMtimeMs: 1000, installMtimeMs: 1000 }));
+        assert.strictEqual(linkRow.split("\n").filter((l) => l.toLowerCase().includes("mtime")).length, 1, linkRow);
+        assert.ok(linkRow.includes("Mtime:") && !linkRow.includes("Source mtime"), linkRow);
+        const viaRow = rowTooltip(mk({ name: "m.py", area: "import", viaLinkDomain: "build", sourceMtimeMs: 5, installMtimeMs: 5 }));
+        assert.strictEqual(viaRow.split("\n").filter((l) => l.toLowerCase().includes("mtime")).length, 1, viaRow);
+        // 拷贝安装行(非链)才有双行对表的信息量 → 保留双行
+        const copyRow = rowTooltip(mk({ name: "c.txt", sourceMtimeMs: 1, installMtimeMs: 2 }));
+        assert.ok(copyRow.includes("Source mtime:") && copyRow.includes("Install mtime:"), copyRow);
+        // ⑤ build 链文案不动
+        assert.ok(rowTooltip(mk({ linkDomain: "build" })).includes("may break after rebuild"));
+    });
+
+    it("点击行复核比较 rowStateStale(2026-10-14):三态任一变化=陈旧;mtime 信息差不算;undefined 与 false 同义", () => {
+        // 状态翻转(缺→装 / 装→缺)= 不一致
+        assert.strictEqual(rowStateStale({ status: "missing" }, { status: "installed" }), true);
+        assert.strictEqual(rowStateStale({ status: "installed" }, { status: "missing" }), true);
+        // 悬空翻转 / 源失效翻转 = 不一致
+        assert.strictEqual(rowStateStale({ status: "installed" }, { status: "installed", dangling: true }), true);
+        assert.strictEqual(rowStateStale({ status: "installed", dangling: true }, { status: "installed", dangling: false }), true);
+        assert.strictEqual(rowStateStale({ status: "installed", sourceMissing: false }, { status: "installed", sourceMissing: true }), true);
+        // 全等 = 一致(零动作,页面静止)
+        assert.strictEqual(rowStateStale({ status: "installed" }, { status: "installed" }), false);
+        assert.strictEqual(rowStateStale({ status: "missing", sourceMissing: true }, { status: "missing", sourceMissing: true }), false);
+        // undefined 与 false 同义(无该标记 = 无)
+        assert.strictEqual(rowStateStale({ status: "installed" }, { status: "installed", dangling: false, sourceMissing: false }), false);
+    });
+
+    it("残留条目(2026-10-14 方案 B):默认隐藏+计数、开眼显示;灰 history 图标+old 描述;包悬浮含构建时间", () => {
+        const row = (over: Record<string, unknown>): SidebarRow =>
+            ({ area: "lib", name: "x", status: "installed", library: false, generated: false, installPath: "/i/x", ...over } as SidebarRow);
+        const mkView = {
+            pkg: "p",
+            prefix: "/i/p",
+            layout: "isolated" as const,
+            rows: [row({ name: "cur", sourcePath: "/ws/src/p/cur" }), row({ name: "old_exe", leftover: true })],
+        };
+        // ① 方案 B:默认隐藏(计数 1,树上只剩现行行);开眼后残留行现形
+        assert.strictEqual(countLeftovers([mkView]), 1);
+        const hiddenLib = buildTree([mkView], "/ws")[0].children![0];
+        assert.strictEqual(hiddenLib.children!.length, 1, JSON.stringify(hiddenLib.children));
+        assert.strictEqual(hiddenLib.children![0].label, "cur");
+        const shownLib = buildTree([mkView], "/ws", { showLeftovers: true })[0].children![0];
+        assert.strictEqual(shownLib.children!.length, 2);
+        const oldNode = shownLib.children!.find((c) => c.label === "old_exe")!;
+        assert.deepStrictEqual(iconPlanOf(oldNode), { tag: "codicon", id: "history", color: "descriptionForeground" }, "残留 = 灰 history(美术统一,最轻档)");
+        assert.strictEqual(oldNode.description, "old", "残留行描述 = l10n「旧/old」(用户裁定)");
+        // ② 优先级:残留 + 悬空 → unlink(残留是最轻档,排在三态之后)
+        const both = fileNodeOf({ name: "z", status: "installed", installPath: "/i/z", library: false, generated: false, area: "lib", dangling: true, leftover: true } as Parameters<typeof fileNodeOf>[0]);
+        assert.deepStrictEqual(iconPlanOf(both), { tag: "codicon", id: "debug-disconnect", color: "list.errorForeground" });
+        // ③ 包悬浮构建时间:有 buildTimeMs 才显示该行
+        const withTime = buildTree([{ ...mkView, buildTimeMs: 1760000000000 }], "/ws")[0];
+        assert.ok(withTime.tooltip!.includes("Build time:"), withTime.tooltip);
+        const withoutTime = buildTree([mkView], "/ws")[0];
+        assert.ok(!withoutTime.tooltip!.includes("Build time:"), withoutTime.tooltip);
+    });
+
+    it("消失行合成 synthesizeVanishedRows + 图标优先级 missing>warning>unlink(2026-10-14 用户定义)", () => {
+        // ① 链形态行(目录链 viaLinkPath / 文件链 link)蒸发 → 合成 manifest-only(rowsOf 落 missing);实体行不兜
+        const base = { pkg: "ggg", area: "import" as const, library: false, generated: false, agreement: "observed" as const, sourcePath: "/ws/src/ggg/x.py" };
+        const dirLinkRow: AreaFile = { ...base, relPath: "a.py", installPath: "/i/sp/ggg/a.py", link: false, viaLinkPath: "/i/sp/ggg" };
+        const fileLinkRow: AreaFile = { ...base, relPath: "b.py", installPath: "/i/sp/ggg/b.py", link: true, viaLinkPath: undefined };
+        const copyRow: AreaFile = { ...base, relPath: "c.py", installPath: "/i/sp/ggg/c.py", link: false, viaLinkPath: undefined };
+        const kept: AreaFile = { ...base, relPath: "kept.py", installPath: "/i/sp/ggg/kept.py", link: false, viaLinkPath: "/i/sp/ggg" };
+        const out = synthesizeVanishedRows([dirLinkRow, fileLinkRow, copyRow], [kept]);
+        assert.deepStrictEqual(out.map((f) => f.installPath).sort(), ["/i/sp/ggg/a.py", "/i/sp/ggg/b.py"], JSON.stringify(out));
+        assert.ok(out.every((f) => f.agreement === "manifest-only"), "合成行必须落 manifest-only(rowsOf → missing)");
+        assert.strictEqual(out[0].sourcePath, "/ws/src/ggg/x.py", "已消失的源字段原样携带(tooltip 仍可见)");
+        // 已是 manifest-only 不重复;仍被观察的不合成
+        assert.deepStrictEqual(synthesizeVanishedRows([{ ...dirLinkRow, agreement: "manifest-only" as const }, kept], [kept]), []);
+        // ② 图标优先级(用户定义:missing > warning > unlink)
+        const mk = (over: Partial<TreeNode>): TreeNode => ({ kind: "file", label: "n", ...over });
+        assert.deepStrictEqual(iconPlanOf(mk({ status: "missing", dangling: true, sourceMissing: true })), { tag: "codicon", id: "error", color: "list.errorForeground" }, "missing 最高");
+        assert.deepStrictEqual(iconPlanOf(mk({ dangling: true, sourceMissing: true })), { tag: "codicon", id: "warning", color: "editorWarning.foreground" }, "python file 链→src 删源:warning+unlink 同真 → warning");
+        assert.deepStrictEqual(iconPlanOf(mk({ dangling: true })), { tag: "codicon", id: "debug-disconnect", color: "list.errorForeground" }, "cpp exe install→build 链断:仅 unlink(跳转照常)");
     });
 
     it("图标决策:无 sourcePath 的文件行退回角色图标(用户裁定「有源路径才换」)", () => {

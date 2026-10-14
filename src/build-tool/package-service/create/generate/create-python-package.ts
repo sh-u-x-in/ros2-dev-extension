@@ -21,6 +21,7 @@ import { renderAmentPythonPackageXml } from '../templates/package-xml';
 import { renderSetupPy, renderSetupCfg, LINT_TEST_FILES } from '../templates/py-setup';
 import { pyNodeSource } from '../templates/py-node';
 import type { GeneratedFile } from '../naming/generated-file';
+import type { TemplateCommentLang } from '../../../../../l10n/templates/index';
 
 // —— 公共 API 门面(符号自新模块转发, 兼容既有 import 路径) ——
 export { validatePackageName, parseNodeNames, validateNodeNamesInput } from '../naming/names';
@@ -41,6 +42,12 @@ export interface PythonPackageConfig {
     nodeNames: string[];
     /** 额外运行依赖(追加 <depend>, 不含默认的 rclpy; 可为空) */
     extraDeps?: string[];
+    /**
+     * 生成物教学注释语种(2026-10-12 L10N,用户裁定「路线 2」):交互层经
+     * normalizeCommentLang(vscode.env.language) 归一后传入;缺省 "en"(英语源)。
+     * 译文表在 l10n/templates/,生成物单语不混排。
+     */
+    commentLang?: TemplateCommentLang;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,20 +62,24 @@ export function generatePythonPackageFiles(config: PythonPackageConfig): Generat
     log.debug(`生成 Python 包文件清单:${config.packageName},${config.nodeNames.length} 个节点`);
     const pkg = config.packageName;
     const nodes = config.nodeNames;
+    // 生成物教学注释语种(缺省 en = 英语源;译文表见 l10n/templates/)
+    const lang: TemplateCommentLang = config.commentLang ?? "en";
     // 额外依赖去重: ament_python 默认已有 rclpy, 重复输入静默过滤
     const extraDeps = (config.extraDeps || []).filter((d) => d !== 'rclpy');
     const files: GeneratedFile[] = [];
 
-    files.push({ path: 'package.xml', content: renderAmentPythonPackageXml(pkg, extraDeps) });
-    files.push({ path: 'setup.py', content: renderSetupPy(pkg, nodes) });
-    files.push({ path: 'setup.cfg', content: renderSetupCfg(pkg) });
+    files.push({ path: 'package.xml', content: renderAmentPythonPackageXml(pkg, extraDeps, lang) });
+    files.push({ path: 'setup.py', content: renderSetupPy(pkg, nodes, lang) });
+    files.push({ path: 'setup.cfg', content: renderSetupCfg(pkg, lang) });
     files.push({ path: `resource/${pkg}`, content: '' });
     files.push({ path: `${pkg}/__init__.py`, content: '' });
     files.push({ path: `${pkg}/py.typed`, content: '' });
 
     // 循环:为每个节点生成 Python 源文件(模板全库唯一来源 pyNodeSource)
+    // directExec:false —— ament_python 模块经 console_scripts 入口点执行(setuptools 包装器自带
+    // shebang,模块本身是被 import 的),不写 shebang(2026-10-12 方案 B 用户裁定)
     for (const node of nodes) {
-        files.push({ path: `${pkg}/${node}.py`, content: pyNodeSource(pkg, node) });
+        files.push({ path: `${pkg}/${node}.py`, content: pyNodeSource(pkg, node, lang, { directExec: false }) });
     }
 
     for (const t of LINT_TEST_FILES) {

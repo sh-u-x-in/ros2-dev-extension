@@ -117,6 +117,7 @@ float64
 - **cpptools**:自动同步 `.vscode/c_cpp_properties.json` 的 include 路径(ROS 安装路径 + 工作区各包);
 - **clangd**:自动同步 `.clangd`(工作区 `-I` 条目 + 各前缀 `-isystem` 条目),并把每个包的 `compile_commands.json` 合并进 `build/compile_commands.json`;
 - 引擎可经 `ROS2.ide.intellisenseEngine` 选择(`auto` / `cpptools` / `clangd` / `both` / `none`);包或 ROS 环境变化时路径自动再生。
+- 需要改写或去掉个别生成条目时,用分文件替换表 `ROS2.ide.entryOverrides.clangd` / `.cpptools` / `.python`:键 = 该文件文法下的精确条目,值 = 替换串(空串 = 删除该条目)。规则链式解析,单次同步一步到位(详见设置页)。
 
 ## 提示
 

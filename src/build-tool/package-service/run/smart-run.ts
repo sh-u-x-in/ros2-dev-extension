@@ -19,13 +19,16 @@ import { ros2RunMemoryId } from "../share/defaults/ros2-run";
 import { pickPresets } from "../share/pick-preset";
 import { readSelectionMemory, writeSelectionMemory } from "../share/selection-memory";
 import { expandRos2Run, readRosRunSpec } from "./share-spec";
+import { notifyStaleIfNeeded } from "./run-data-source";
 import type { RunDataSource } from "./run-data-source";
 
 /** smart-run 模块日志 */
 const log = getLogger("smart-run");
 
-/** 单个目标的完整运行流程:读记忆 → 参数弹窗(预填)→ 写记忆 → 展开 → 任务终端 */
-async function executeRunSelection(workspaceRoot: string, pkg: string, executable: string): Promise<void> {
+/** 单个目标的完整运行流程:读记忆 → 参数弹窗(预填)→ 写记忆 → 展开 → 任务终端。
+ *  stale(2026-10-13):仅 Ctrl+F10 源文件路径传入(源/安装双路径)——参数确认 + 展开成功后,
+ *  若源比安装产物新,弹一条非模态警告气泡(纯附加,不等待不拦截;2026-10-14 起带「不再显示」按钮);面板/▶ 路径不传不查。 */
+async function executeRunSelection(workspaceRoot: string, pkg: string, executable: string, stale?: { srcPath?: string; installPath?: string }): Promise<void> {
     const memory = await readSelectionMemory(workspaceRoot, ros2RunMemoryId(pkg, executable));
     const pick = await pickPresets(readRosRunSpec(), {
         title: vscode.l10n.t("Run {0}/{1} - run arguments", pkg, executable),
@@ -49,7 +52,10 @@ async function executeRunSelection(workspaceRoot: string, pkg: string, executabl
         vscode.window.showErrorMessage(vscode.l10n.t("Run command expanded to empty; cancelled. Check the template in setting ROS2.run.shareSpec."));
         return;
     }
-    await composeApi.rosTaskRunner.run({ argv: expanded.argv, pkg, executable, cwd: workspaceRoot });
+    // 运行照常先行;陈旧附加警告(2026-10-13,用户裁定「附加不阻碍」)随后——不等待,2026-10-14 起为警告气泡+「不再显示」按钮
+    const running = composeApi.rosTaskRunner.run({ argv: expanded.argv, pkg, executable, cwd: workspaceRoot });
+    notifyStaleIfNeeded("run", pkg, executable, stale?.srcPath, stale?.installPath);
+    await running;
     log.debug(vscode.l10n.t("Run executed: {0}/{1}, presets [{2}]", pkg, executable, pick.picked.join(",")));
 }
 
@@ -86,21 +92,31 @@ export async function runRosExecutable(data: RunDataSource | null): Promise<void
 }
 
 /** 一键运行(Ctrl+F10,.py/.cpp):源文件 → ownersOfSource → 所属可执行直接运行。
- *  0 属主(未构建/无跳转记录)→ 提示先构建,不自动构建;多属主 → QuickPick 选。 */
+ *  双警告(2026-10-13 方案甲,用户裁定):①0 属主 = 完全未编译/无映射 → 提示先构建;
+ *  ②属主全在但安装侧未就绪 = 已编译未安装(或安装失败/无安装规则)→ 警告先 colcon build。
+ *  多属主 → QuickPick 选;不自动构建。 */
 export async function runActiveEditor(data: RunDataSource | null, srcPath: string): Promise<void> {
     if (data === null) {
         vscode.window.showErrorMessage(vscode.l10n.t("Executable info not ready; cannot run (please wait and retry)"));
         return;
     }
     const owners = await data.ownersOfSource(srcPath);
-    if (owners.length === 0) {
+    // 警告①:完全未编译(或源未映射)—— 跳转表无任何记录
+    if (owners.runnable.length === 0 && owners.compiledNotInstalled.length === 0) {
         vscode.window.showInformationMessage(vscode.l10n.t("This file is not built or not mapped to an install-side executable — build first (colcon build), then run."));
         return;
     }
-    let target = owners[0];
-    if (owners.length > 1) {
+    // 警告②:已编译但安装侧未就绪(没装/装失败/无安装规则)—— 跳转表有记录但 lib 区无 installed 可执行行
+    if (owners.runnable.length === 0) {
+        vscode.window.showWarningMessage(vscode.l10n.t(
+            "Compiled but not installed: {0} mapped executable(s) are missing from the install tree — run colcon build to install, then retry.",
+            owners.compiledNotInstalled.length));
+        return;
+    }
+    let target = owners.runnable[0];
+    if (owners.runnable.length > 1) {
         const picked = await vscode.window.showQuickPick(
-            owners.map((o) => ({ label: `${o.pkg} · ${o.executable}`, target: o })),
+            owners.runnable.map((o) => ({ label: `${o.pkg} · ${o.executable}`, target: o })),
             { placeHolder: vscode.l10n.t("This source file maps to multiple executables; pick one to run") }
         );
         if (picked === undefined) {
@@ -108,15 +124,16 @@ export async function runActiveEditor(data: RunDataSource | null, srcPath: strin
         }
         target = picked.target;
     }
-    await runExecutableFromTree(target);
+    await runExecutableFromTree(target, { srcPath: target.srcPath, installPath: target.installPath });
 }
 
-/** 侧边栏树入口(lib 区 ▶):目标已知,跳过选择,直接参数弹窗 → 执行 */
-export async function runExecutableFromTree(req: { pkg: string; executable: string }): Promise<void> {
+/** 侧边栏树入口(lib 区 ▶):目标已知,跳过选择,直接参数弹窗 → 执行。
+ *  stale 仅 Ctrl+F10 路径传入(侧边栏 ▶ 无源语境,不做陈旧判定)。 */
+export async function runExecutableFromTree(req: { pkg: string; executable: string }, stale?: { srcPath?: string; installPath?: string }): Promise<void> {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (workspaceRoot === undefined) {
         vscode.window.showErrorMessage(vscode.l10n.t("No workspace folder found"));
         return;
     }
-    await executeRunSelection(workspaceRoot, req.pkg, req.executable);
+    await executeRunSelection(workspaceRoot, req.pkg, req.executable, stale);
 }

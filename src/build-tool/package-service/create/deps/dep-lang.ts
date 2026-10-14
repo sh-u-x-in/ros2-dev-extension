@@ -110,3 +110,62 @@ export function unionCandidateNames(
     }
     return out;
 }
+
+/* ================================================================== */
+/* 用户补充索引:候选描述覆盖(2026-10-13,用户裁定)                       */
+/* ================================================================== */
+
+/** 用户补充索引设置键(ROS2.packages.userIndex;键 = 包名,值 = "[py|]描述") */
+export const USER_INDEX_SETTING = "packages.userIndex";
+
+/**
+ * 解析用户索引的 value(纯函数;规则=用户裁定,宽容优先):
+ *  · 分隔符 = 第一个【未转义】的 `|`(扫描时 `\x` 两字符按转义单元跳过,故 `\|` 不再当分隔符);
+ *  · 含分隔符:之前 = 前缀段(**恒丢弃**),之后全文 = 描述;
+ *    前缀段 `=== "py"`(忽略大小写)→ 强制 [纯 Python 包] 标注;否则(含 "cpp"/拼错串)→ 无标注;
+ *  · 不含分隔符:全值为描述,无强制标注(cpp 默认);
+ *  · 描述段反转义:`\|` → `|`(单独的反斜杠不转义,原样保留)——cpp 描述可自然携带 `|` 字符,
+ *    消除"首段被静默丢弃"的陷阱;旧 leading-`|` 写法(`"|a|b"`)向后兼容。
+ */
+export function parseUserIndexValue(value: string): { py: boolean; description: string } {
+    let sep = -1;
+    for (let i = 0; i < value.length; i++) {
+        if (value[i] === "\\") {
+            i++; // 转义单元:连同被转义字符一起跳过("\|" 由此不再当分隔符)
+            continue;
+        }
+        if (value[i] === "|") {
+            sep = i;
+            break;
+        }
+    }
+    const head = sep < 0 ? "" : value.slice(0, sep);
+    const raw = sep < 0 ? value : value.slice(sep + 1);
+    const py = head.trim().toLowerCase() === "py";
+    // 描述段反转义:"\|" → "|"(仅此序列;单独反斜杠原样保留)
+    const description = raw.replace(/\\\|/g, "|");
+    return { py, description };
+}
+
+/** 解析结果(py 强制标注 / 覆盖描述) */
+export interface UserIndexOverride {
+    /** 强制显示 [纯 Python 包] 标注 */
+    py?: boolean;
+    /** 覆盖 QuickPick description 的用户描述文本 */
+    description?: string;
+}
+
+/**
+ * 包名 → 用户覆盖(纯函数;key 精确 = 包名,大小写敏感——ROS 名本敏感):
+ * 未命中 → undefined(条目不显示的语义由调用方保证:本表只做覆盖,不做候选注入)。
+ */
+export function descriptionOverrideOf(
+    map: Record<string, string> | undefined,
+    name: string,
+): UserIndexOverride | undefined {
+    const raw = map?.[name];
+    if (raw === undefined) {
+        return undefined;
+    }
+    return parseUserIndexValue(raw);
+}

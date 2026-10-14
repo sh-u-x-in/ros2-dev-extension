@@ -238,7 +238,9 @@ export interface AreaFile {
     linkTarget?: string;
     /**
      * 软链目标归属(由目标前缀判定)—— 这是"扩大"与"要不要重装"的机器可读版本:
-     *   `src`     → 源码直通(改源码立即生效,无需重装)
+     *   `src`     → 安装副本与源为同一文件;**生效方式按消费而定**(2026-10-14 修正,勿再写"立即生效":
+     *               py 源码/资源运行时照读改了即用;接口定义 .msg/.srv/.action 消费的是 rosidl 生成代码,
+     *               改源需重新构建;头文件消费在编译期,改源需重新编译)
      *   `build`   → 构建产物(重新构建后可能失效 = 悬空链的来源)
      *   `outside` → 工作区外(如 `/opt/ros/...`),**不可**用于源码映射
      */
@@ -257,6 +259,13 @@ export interface AreaFile {
     viaLinkDomain?: "src" | "build" | "outside";
     /** 能不能直接执行:实体看自身模式位,软链**看目标**(链自身 `lrwxrwxrwx` 无意义) */
     executable?: boolean;
+    /**
+     * 残留(2026-10-14,用户裁定):lib 区行,install/ 里真实存在但**最近一次构建的声明已不认**
+     * (清单/安装规则/jumps 三处查无——典型:setup.py 入口被注释/改名后的旧包装器、改名前的旧 elf)。
+     * 观察有、记录无,与 manifest-only(记录有、观察无)对称;展示侧默认隐藏,眼睛按钮切换。
+     * 仅 lib 区判定——import 区 develop/egg-link 行天然无 per-file 记录,是常态不是残留。
+     */
+    leftover?: boolean;
     /** 打包/构建生成的中间物(hook / environment / cmake / package.* / __pycache__ / egg-info / build 内生成源)—— 标记而非过滤 */
     generated: boolean;
     /** 源落点(由记录推出;**只拼字符串,不判存在性** —— README §2.2) */
@@ -310,6 +319,11 @@ export interface BuildMapSnapshot {
     durationMs: number;
     /** 构建完成时刻(epoch 毫秒) */
     builtAt: number;
+    /**
+     * 包 → 最近一次构建时刻(colcon_build.rc 的 mtime;增量门本来就在读,零新扫描;
+     * 纯展示数据,**不参与指纹**——避免"只重建不改产物"时的事件 churn)。可选(测试夹具免带)。
+     */
+    buildTimes?: Map<string, number>;
     /** 原因(全量/失效来源),供排障与事件消费方记录 */
     reason: string;
 }

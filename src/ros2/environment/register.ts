@@ -46,8 +46,8 @@ const log = getLogger("environment-register");
  *
  * 2026-09-16(方案 2):watcher 改"以**文件自身**为 base + 模式 `*`"(官方 d.ts 的"单文件监视"范例)。
  * 为什么换掉之前以工作区根为 base 的写法:该模式含斜杠 ⇒ VS Code 判其为"递归 watcher",
- * 并自动把 files.watcherExclude 塞进 excludes —— 排除表里只要有指向 install 子树的 glob(本扩展自己写入),
- * 事件会在源头被过滤而静默(2026-09-16 源码级复盘)。文件型非递归监视不走该通道:事件显式跳过
+ * 并自动把 files.watcherExclude 塞进 excludes —— 排除表里只要有指向 install 子树的 glob(旧版扩展曾写入,
+ * 残留或用户自配均可能命中),事件会在源头被过滤而静默(2026-09-16 源码级复盘)。文件型非递归监视不走该通道:事件显式跳过
  * excludes/includes 检查("file is explicitly watched");且 install/ 尚不存在时会"挂起 + fs.watchFile 轮询(~5s)",
  * 路径出现即合成 create 事件并转入正式监视(baseWatcher 源码行为)——首次构建(onDidCreate)同样可靠。
  */

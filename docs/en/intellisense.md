@@ -117,6 +117,7 @@ For C++ and Python code that uses ROS, run the command **ROS2: Regenerate Intell
 - **cpptools**: keeps `.vscode/c_cpp_properties.json` include paths in sync (ROS install paths + your workspace packages);
 - **clangd**: keeps `.clangd` in sync (workspace `-I` entries + per-prefix `-isystem` entries) and merges every package's `compile_commands.json` into `build/compile_commands.json`;
 - The engine is selectable via `ROS2.ide.intellisenseEngine` (`auto` / `cpptools` / `clangd` / `both` / `none`); paths are regenerated automatically when packages or the ROS environment change.
+- To rewrite or drop individual generated entries, use the per-file replacement tables `ROS2.ide.entryOverrides.clangd` / `.cpptools` / `.python`: key = the exact entry in that file's grammar, value = the replacement (empty string = remove). Rules chain to a fixed point in a single sync (see Settings).
 
 ## Tips
 
