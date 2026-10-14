@@ -8,6 +8,7 @@ out/**
 test/**
 test-results/**
 src/**
+l10n/templates/**
 node_modules/**
 dist/**/*.js.map
 tsconfig.json
@@ -33,6 +34,8 @@ svg-preview/**
 # 本地/未跟踪内容(磁盘上存在但绝不能进包)
 1
 1/**
+迭代
+迭代/**
 ROS2_Tuition-main/**
 rde-urdf-1.7.1
 rde-urdf-1.7.1/**
