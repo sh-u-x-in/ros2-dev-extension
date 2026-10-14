@@ -201,11 +201,15 @@ export function launchMonitor(context: vscode.ExtensionContext) {
                 case 'subscribeTopic':
                     // 话题快速订阅(2026-09-26 批次1):普通集成终端跑 ros2 topic echo——
                     // 终端常驻,Ctrl+C 停止后提示符仍在,用户可直接改造命令重跑(任务终端做不到)。
+                    // 2026-10-13 命令带数据类型(用户裁定):无发布者时 humble echo 发现不到类型会瞬间
+                    // RuntimeError 退出;带类型则订阅先起、发布者后上线即收。复制按钮维持仅话题名
+                    // (类型列已有展示,不加类型防重复)。type 缺失防御性退回无类型命令。
                     {
                         const topic = String(message?.topic ?? "");
+                        const topicType = String(message?.topicType ?? "");
                         composeApi.terminalRun({
                             name: `topic:${topic}`,
-                            command: `ros2 topic echo ${topic}`,
+                            command: topicType !== "" ? `ros2 topic echo ${topic} ${topicType}` : `ros2 topic echo ${topic}`,
                             resendOnReuse: false,
                         }).then((r) => postCommandResult(panel, 'subscribe', topic, r));
                     }

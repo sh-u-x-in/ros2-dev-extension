@@ -123,5 +123,26 @@ describe("distro-templates 发行版模板与版本发现", () => {
             assert.deepStrictEqual(Object.keys(dt.DISTRO_INCLUDE_LAYOUT).sort(), Object.keys(dt.DISTRO_PATH_TEMPLATES).sort());
         });
     });
+
+    describe("resolveCxxStandard C++ 标准分派(create 域消费,2026-10-13)", () => {
+        it("官方矩阵:dashing/eloquent/foxy=14;galactic~kilted=17;lyrical=20", () => {
+            for (const d of ["dashing", "eloquent", "foxy"]) {
+                assert.strictEqual(dt.resolveCxxStandard(d), "14", d);
+            }
+            for (const d of ["galactic", "humble", "iron", "jazzy", "kilted"]) {
+                assert.strictEqual(dt.resolveCxxStandard(d), "17", d);
+            }
+            assert.strictEqual(dt.resolveCxxStandard("lyrical"), "20");
+        });
+        it("兜底:rolling/未知/undefined → 17(DEFAULT humble 同向)", () => {
+            assert.strictEqual(dt.resolveCxxStandard("rolling"), "17");
+            assert.strictEqual(dt.resolveCxxStandard("no_such_distro"), "17");
+            assert.strictEqual(dt.resolveCxxStandard(undefined), "17");
+        });
+        it("表键与模板表同覆盖(9 发行版)", () => {
+            assert.deepStrictEqual(Object.keys(dt.DISTRO_CXX_STANDARD).sort(), Object.keys(dt.DISTRO_PATH_TEMPLATES).sort());
+        });
+    });
 });
+// 修改时间:2026-10-13 19:2x(新增 C++ 标准分派表 DISTRO_CXX_STANDARD/resolveCxxStandard:官方矩阵 dashing~foxy=14/galactic~kilted=17/lyrical=20/未知兜底 17,3 例)
 // 修改时间:2026-09-28(VD-3 建档:模板表覆盖/回落/观测提取/组合覆盖与不组合语义,9 例)

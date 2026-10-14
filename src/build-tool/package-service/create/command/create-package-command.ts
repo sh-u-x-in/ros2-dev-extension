@@ -40,7 +40,9 @@ import type { PickDepsResult } from '../deps/dep-pick';
 import { packageCore } from '../../../../extension';
 // 头文件布局按机器发行版分派(内容对齐):发行版 → double/single 查表单一事实源在 gen 域
 import { environmentFacade } from '../../../../ros2/environment';
-import { resolveIncludeLayout } from '../../config/gen/distro-templates';
+import { resolveIncludeLayout, resolveCxxStandard } from '../../config/gen/distro-templates';
+// 生成物教学注释语种(2026-10-12 L10N):UI 语言归一(zh* → zh-cn,其余 → en)后传生成器
+import { normalizeCommentLang } from '../../../../../l10n/templates/index';
 
 /** 写扩展日志(经薄封装分级到 ROS 2 输出通道), outputChannel 未就绪时安全跳过 */
 const logger = getLogger('create-package');
@@ -195,9 +197,13 @@ async function createCppLike(
         : disambiguateNodeNames(nodes.pyNames);
     // 依赖通道拆分(2026-09-06): pythonOnly 纯 Python 依赖只落 <exec_depend>, 不 find_package
     // 头文件布局按机器发行版分派(内容对齐): 未知/rolling → double 兜底; 生成的文本自身版本中立
+    // C++ 标准锁定按机器发行版分派(2026-10-13): 14(dashing~foxy)/17(galactic~kilted)/20(lyrical), 未知→17
+    // 教学注释语种(2026-10-12 L10N): 按 UI 语言出单语生成物(zh* → 中文表,其余 → 英语源)
     const files = generateCppPackageFiles({
         packageName: pkg, kind, extraDeps: deps.deps, pythonOnlyDeps: deps.pythonOnly, cppNodes, pythonNodes,
         includeLayout: resolveIncludeLayout(environmentFacade.getEnv()?.ROS_DISTRO),
+        cxxStandard: resolveCxxStandard(environmentFacade.getEnv()?.ROS_DISTRO),
+        commentLang: normalizeCommentLang(vscode.env.language),
     });
     writeFiles(path.join(base, pkg), files);
 
@@ -256,7 +262,8 @@ export async function createPythonPackage(uri?: vscode.Uri): Promise<void> {
         vscode.window.showErrorMessage(parsed.error);
         return;
     }
-    const files = generatePythonPackageFiles({ packageName: pkg, nodeNames: parsed.nodeNames, extraDeps: deps.deps });
+    // 教学注释语种(2026-10-12 L10N): 按 UI 语言出单语生成物
+    const files = generatePythonPackageFiles({ packageName: pkg, nodeNames: parsed.nodeNames, extraDeps: deps.deps, commentLang: normalizeCommentLang(vscode.env.language) });
     writeFiles(path.join(base, pkg), files);
 
     // 【B1 直接通信】创建成功后直接接入 package-core(2026-08-28:取代旧壳 handlePackageXmlChange + flushPackagesSyncNow)

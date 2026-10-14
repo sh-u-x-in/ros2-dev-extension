@@ -12,11 +12,15 @@
  * 共享段(依赖标签分类展开 / 接口意图组声明)抽为下方私有 helper, 全库唯一实现;
  * 元数据值经 ./meta PKG_META 引用(变量替换扩展位)。
  *
- * 内容与迁移前逐字节一致(结构重构硬约束)。
+ * 教学注释 L10N(2026-10-12,用户裁定「路线 2」):头部包清单行/变体文案/全部 XML 教学
+ * 注释以稳定 ID 查 l10n/templates 表(源语言 en.ts 英语源 + 各语种译文表),按 `lang` 出
+ * **单语**生成物;XML 标签与结构行保持内联不译。缺省 "en" 时输出与历史版本逐字节一致。
  */
 
 import { depTagClass, hasInterfaceIntent } from '../deps/dep-catalog';
 import { PKG_META, XML_DECL_LINES } from './meta';
+import { resolveXmlStrings } from '../../../../../l10n/templates/index';
+import type { TemplateCommentLang } from '../../../../../l10n/templates/index';
 
 /** ament_cmake 系 package.xml 渲染所需差异项(结构上与生成器 KindSpec 子集兼容) */
 export interface AmentCmakeXmlSpec {
@@ -31,22 +35,6 @@ export interface AmentCmakeXmlSpec {
     /** 纯 Python 运行依赖(无 CMake 导出; 仅 <exec_depend>, 供包内 Python 侧 import) */
     pythonOnlyDeps?: string[];
 }
-
-/** 变体 → package.xml 顶部"Note"与 <description> 文案(与生成内容名实相符) */
-const VARIANT_XML_TEXT: Record<AmentCmakeXmlSpec['variant'], { note: string; desc: string }> = {
-    'cpp-only': {
-        note: 'Note: pure C++ node package (ament_cmake, no Python)',
-        desc: 'Pure C++ demo package (ament_cmake)',
-    },
-    'cpp-dual': {
-        note: 'Note: C++ node + Python scripts (dual-language package, ament_cmake; installed via PROGRAMS, the ros2 run name keeps .py)',
-        desc: 'Dual-language demo package (ament_cmake: C++ node + Python scripts)',
-    },
-    'mixed': {
-        note: 'Note: C++ node + Python module (mixed package, ament_cmake + ament_cmake_python)',
-        desc: 'Mixed demo package (ament_cmake: C++ node + Python module)',
-    },
-};
 
 /**
  * 追加"Extra dependencies"标签组(消费形态分类, 05 文档 §2):
@@ -81,11 +69,11 @@ function pushExtraDepTags(lines: string[], extraDeps: string[]): void {
  * 勾选同时含"generator-side >=1"且"runtime-side >=1"(标配对) → 注入
  * `<member_of_group>rosidl_interface_packages</member_of_group>`; 否则不加。
  */
-function pushInterfaceGroup(lines: string[], extraDeps: string[]): void {
+function pushInterfaceGroup(lines: string[], extraDeps: string[], groupComment: string): void {
     if (hasInterfaceIntent(extraDeps)) {
         lines.push(
             '',
-            '  <!-- Group membership: declares this package as part of rosidl_interface_packages (for interface providers; orthogonal to depend tags and required once msg/srv/action are added) -->',
+            groupComment,
             '  <member_of_group>rosidl_interface_packages</member_of_group>',
         );
     }
@@ -96,57 +84,64 @@ function pushInterfaceGroup(lines: string[], extraDeps: string[]): void {
  * 结构: 声明 + 头部注释 → 包名/版本/维护者/license → buildtool 组(ament_cmake [+ ament_cmake_python])
  *   → 空行 → 运行依赖组(rclcpp [+ rclpy]) → [Extra dependencies组] → [接口组] → 空行 → 测试段 → export → 收尾。
  */
-export function renderAmentCmakePackageXml(pkg: string, spec: AmentCmakeXmlSpec): string {
-    const txt = VARIANT_XML_TEXT[spec.variant];
+export function renderAmentCmakePackageXml(pkg: string, spec: AmentCmakeXmlSpec, lang: TemplateCommentLang = "en"): string {
+    // 教学注释表(按语种; 缺省 en 与历史版本逐字节一致)
+    const T = resolveXmlStrings(lang, { pkg });
+    // 变体 → package.xml 顶部"Note"与 <description> 文案(与生成内容名实相符; 文案出自注释表)
+    const txt = {
+        'cpp-only': { note: T.cppOnlyNote, desc: T.cppOnlyDesc },
+        'cpp-dual': { note: T.cppDualNote, desc: T.cppDualDesc },
+        'mixed': { note: T.mixedNote, desc: T.mixedDesc },
+    }[spec.variant];
     // 数组拼接, 显式控制块间空行:
     // buildtool 组(组内无空行) -> 空行 -> 运行依赖组(组内无空行) -> 空行 -> 测试段 -> 空行 -> export
     const lines: string[] = [
         ...XML_DECL_LINES,
         '<!-- ============================================================',
-        `     ${pkg}/package.xml: 示范包的包清单`,
+        T.headerManifest,
         `     ${txt.note}`,
         '     ============================================================ -->',
         '<package format="3">',
-        '  <!-- Package name (globally unique; used for both build and run) -->',
+        T.nameComment,
         `  <name>${pkg}</name>`,
         '',
-        '  <!-- Version -->',
+        T.versionComment,
         `  <version>${PKG_META.version}</version>`,
         '',
         `  <description>${txt.desc}</description>`,
         `  <maintainer email="${PKG_META.maintainerEmail}">${PKG_META.maintainerName}</maintainer>`,
         `  <license>${PKG_META.license}</license>`,
         '',
-        '  <!-- Buildtool depend: declares ament_cmake as the build system -->',
+        T.buildtoolComment,
         '  <buildtool_depend>ament_cmake</buildtool_depend>',
     ];
     if (spec.enablePythonModule) {
         lines.push(
-            '  <!-- Buildtool depend: ament_cmake_python is required for Python module installation -->',
+            T.buildtoolPyComment,
             '  <buildtool_depend>ament_cmake_python</buildtool_depend>',
         );
     }
     lines.push(
         '',
-        '  <!-- Exec depend: C++ nodes need rclcpp -->',
+        T.rclcppComment,
         '  <depend>rclcpp</depend>',
     );
     if (spec.enableRclpy) {
         lines.push(
-            '  <!-- Exec depend: Python nodes need rclpy -->',
+            T.rclpyComment,
             '  <depend>rclpy</depend>',
         );
     }
     if (spec.extraDeps.length > 0) {
         pushExtraDepTags(lines, spec.extraDeps);
     }
-    pushInterfaceGroup(lines, spec.extraDeps);
+    pushInterfaceGroup(lines, spec.extraDeps, T.groupComment);
     // 纯 Python 运行依赖: 无 CMake 导出 —— 仅 <exec_depend>(Python 侧 import 用), 不三标签、不 find_package
     const pyOnlyDeps = spec.pythonOnlyDeps ?? [];
     if (pyOnlyDeps.length > 0) {
         lines.push(
             '',
-            "  <!-- Exec depend: pure-Python package (no CMake export; imported by the package's Python code only; not part of the C++ build) -->",
+            T.pyOnlyComment,
         );
         for (const d of pyOnlyDeps) {
             lines.push(`  <exec_depend>${d}</exec_depend>`);
@@ -154,12 +149,12 @@ export function renderAmentCmakePackageXml(pkg: string, spec: AmentCmakeXmlSpec)
     }
     lines.push(
         '',
-        '  <!-- Test depend: lint tools (not enabled; uncomment when needed) -->',
+        T.lintComment,
         '  <!-- <test_depend>ament_lint_auto</test_depend> -->',
         '  <!-- <test_depend>ament_lint_common</test_depend> -->',
         '',
         '  <export>',
-        '    <!-- Build type: tell colcon to build with CMake -->',
+        T.buildTypeCmake,
         '    <build_type>ament_cmake</build_type>',
         '  </export>',
         '</package>',
@@ -173,35 +168,37 @@ export function renderAmentCmakePackageXml(pkg: string, spec: AmentCmakeXmlSpec)
  * 结构: 声明 + 头部注释 → 包名/版本/维护者/license → 空行 → rclpy → [Extra dependencies组]
  *   → [接口组] → 空行 → 测试段 → export → 收尾。
  */
-export function renderAmentPythonPackageXml(pkg: string, extraDeps: string[]): string {
+export function renderAmentPythonPackageXml(pkg: string, extraDeps: string[], lang: TemplateCommentLang = "en"): string {
+    // 教学注释表(按语种)
+    const T = resolveXmlStrings(lang, { pkg });
     // 数组拼接, 简约风格: rclpy 后直接追加Extra dependencies, 再空行接测试段
     const lines: string[] = [
         ...XML_DECL_LINES,
         '<!-- ============================================================',
-        `     ${pkg}/package.xml: 纯 Python 包的包清单`,
+        T.headerManifestPy,
         '     structure note: an ament_python package has no <buildtool_depend> tag',
         '     ============================================================ -->',
         '<package format="3">',
-        '  <!-- Package name -->',
+        T.nameCommentPy,
         `  <name>${pkg}</name>`,
         '',
-        '  <!-- Version -->',
+        T.versionComment,
         `  <version>${PKG_META.version}</version>`,
         '',
         '  <description>Pure-Python demo package (ament_python)</description>',
         `  <maintainer email="${PKG_META.maintainerEmail}">${PKG_META.maintainerName}</maintainer>`,
         `  <license>${PKG_META.license}</license>`,
         '',
-        '  <!-- Exec depend: node code needs rclpy -->',
+        T.rclpyCommentPy,
         '  <depend>rclpy</depend>',
     ];
     if (extraDeps.length > 0) {
         pushExtraDepTags(lines, extraDeps);
     }
-    pushInterfaceGroup(lines, extraDeps);
+    pushInterfaceGroup(lines, extraDeps, T.groupComment);
     lines.push(
         '',
-        '  <!-- Test depend: lint tools and pytest -->',
+        T.lintPyComment,
         '  <!-- <test_depend>ament_copyright</test_depend> -->',
         '  <!-- <test_depend>ament_flake8</test_depend> -->',
         '  <!-- <test_depend>ament_mypy</test_depend> -->',
@@ -210,7 +207,7 @@ export function renderAmentPythonPackageXml(pkg: string, extraDeps: string[]): s
         '  <!-- <test_depend>python3-pytest</test_depend> -->',
         '',
         '  <export>',
-        '    <!-- Build type: tell colcon to build with setuptools -->',
+        T.buildTypePython,
         '    <build_type>ament_python</build_type>',
         '  </export>',
         '</package>',

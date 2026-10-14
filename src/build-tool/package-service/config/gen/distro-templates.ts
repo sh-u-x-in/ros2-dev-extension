@@ -157,5 +157,40 @@ export function resolveIncludeLayout(distro: string | undefined): IncludeLayout 
     }
     return "double";
 }
+
+/* ================================================================== */
+/* C++ 标准分派(2026-10-13,create 域消费):按机器发行版锁编译标准       */
+/* ================================================================== */
+
+/** C++ 标准(与各发行版核心包 rclcpp 官方值对齐;模板经 guard 块写入 CMakeLists,-D 可外部覆盖) */
+export type CxxStandard = "14" | "17" | "20";
+
+/**
+ * 发行版 → C++ 标准(官方实锤:foxy 分支 rclcpp guard 14 / humble 分支 guard 17 /
+ * kilted 分支 guard 17+REQUIRED ON —— 与独立包 guard 模式逐字同款;
+ * rolling 分支 guard 已删,改链 ament_cmake_ros_core::ament_ros_defaults 集中注入 C++20
+ * (官方注释实锤)——lyrical 按官方=20,**独立教学包不跟随该新范式**,guard 自持、不引依赖;
+ * galactic = 核心迁 C++17 起点(公开迁移记录)。
+ */
+export const DISTRO_CXX_STANDARD: Readonly<Record<string, CxxStandard>> = {
+    dashing: "14",
+    eloquent: "14",
+    foxy: "14",
+    galactic: "17",
+    humble: "17",
+    iron: "17",
+    jazzy: "17",
+    kilted: "17",
+    lyrical: "20",
+};
+
+/** 查表分派:未知发行版(rolling)/undefined → "17" 兜底(与 DEFAULT humble 同向;-D 可覆盖) */
+export function resolveCxxStandard(distro: string | undefined): CxxStandard {
+    if (distro && DISTRO_CXX_STANDARD[distro]) {
+        return DISTRO_CXX_STANDARD[distro];
+    }
+    return "17";
+}
+// 修改时间:2026-10-13 19:20(增设 C++ 标准分派 DISTRO_CXX_STANDARD/resolveCxxStandard——第三张表,create 命令链消费,官方发行版矩阵逐分支实锤)
 // 修改时间:2026-09-29 22:30(VD 后续:增设头文件布局分派 resolveIncludeLayout——文本中立与内容对齐分立,create 命令链消费)
 // 修改时间:2026-09-28(VD-1 建档:跨发行版模板表 + 观测优先发现链,差异事实源=gen-静态路径核实-2026-09-15.md)

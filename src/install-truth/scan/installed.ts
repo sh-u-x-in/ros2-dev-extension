@@ -520,6 +520,19 @@ async function collectPackageAreas(
             raw.viaLinkPath === undefined || raw.viaLinkTarget === undefined
                 ? undefined
                 : domainOf(ctx, raw.viaLinkPath, raw.viaLinkTarget);
+        // 残留判定(2026-10-14,用户裁定):仅 lib 区 —— install/ 里真实存在但**最近一次构建的声明已不认**
+        // (清单/安装规则/jumps 三处查无;典型 = setup.py 入口被注释后的旧包装器、改名前的旧 elf)。
+        // import 区豁免:develop/egg-link 行天然无 per-file 记录,是常态不是残留。
+        let leftover: boolean | undefined;
+        if (raw.area === "lib") {
+            const inRules = sourceFromRulesRef(rules, raw.relToPrefix) !== undefined;
+            const inJumps =
+                pkgJumps !== undefined &&
+                pkgJumps.some(
+                    (e) => e.installPath === raw.installPath || (e.installPaths ?? []).indexOf(raw.installPath) >= 0
+                );
+            leftover = !manifestRels.has(raw.relToPrefix) && !inRules && !inJumps;
+        }
         files.push({
             pkg: pkg.name,
             area: raw.area,
@@ -532,6 +545,7 @@ async function collectPackageAreas(
             dangling: raw.dangling,
             viaLinkPath: raw.viaLinkPath,
             viaLinkDomain,
+            leftover,
             executable: ((followed === undefined ? 0 : followed.mode) & 0o111) !== 0,
             // `generated` 的判据**不能用"目标在 build"** —— 那会把 C++ 可执行(软链指向 build,
             // 但源在 src)也标成生成物。真实判据是:**约定黑名单** ∪ **源落在 build 内**
@@ -606,4 +620,34 @@ export async function collectAreas(
 /** 便捷:某一区的条目(消费方按区取用时不必自己 filter) */
 export function areaOf(areas: PackageAreas | undefined, area: AreaName): AreaFile[] {
     return areas === undefined ? [] : areas.files.filter((f) => f.area === area);
+}
+
+/**
+ * 消失行合成(2026-10-14,用户裁定"install/ 下的东西消失就显示 missing"):
+ * 上一版的**链形态行**(文件自身是软链 `link`,或经上游目录软链进来 `viaLinkPath`)在本次观察中
+ * 按 installPath 找不到 → 合成 `agreement: "manifest-only"` 的行(下游 rowsOf 自动落 missing)。
+ *
+ * 为什么只兜链形态行:①目录链行(如 ament_python 符号安装 site-packages/<pkg> → src/<pkg>)与源是
+ * **同一份存储**,删源文件后遍历不再看到它,而 ament_python 无 per-file 安装清单 → manifest-only
+ * 反向对账无从发生 → 行整行蒸发(用户实测"先 warning 后空白");②文件链行本体被删同理无清单兜底;
+ * ③实体行有安装清单对账兜底(有清单的包),不重复兜。已消失的源字段(sourcePath 等)原样携带,
+ * tooltip 仍显示该源(sourceMissing 同真,但 missing 优先级最高)。源恢复/重装 → 重新被观察 → 行
+ * 回归正常,合成行自然消退。
+ */
+export function synthesizeVanishedRows(prevFiles: readonly AreaFile[], nextFiles: readonly AreaFile[]): AreaFile[] {
+    const present = new Set(nextFiles.map((f) => f.installPath));
+    const out: AreaFile[] = [];
+    for (const f of prevFiles) {
+        if (f.agreement === "manifest-only") {
+            continue; // 已是反向行(上次合成/清单对账产物),不重复
+        }
+        if (f.link !== true && f.viaLinkPath === undefined) {
+            continue; // 实体行:有清单对账兜底,不在此重复兜
+        }
+        if (present.has(f.installPath)) {
+            continue; // 仍在观察中(可能变 dangling,行健在)
+        }
+        out.push({ ...f, agreement: "manifest-only" });
+    }
+    return out;
 }

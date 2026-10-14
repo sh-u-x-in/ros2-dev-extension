@@ -53,6 +53,14 @@
 - 应用决策不写过细的版本史/机制链(setuptools 版本号、sysconfig scheme 等),重实践,只保留**严重级别错误**的简要警示
   (如:接口定义与 ament_python_install_package 同包会构建失败;符号安装下 PROGRAMS 源文件须自身有可执行位)。
 
+**④ 语言口径(2026-10-12 立「一律英文」;同日经用户裁定「路线 2」升级为 L10N 单语输出)**:生成文件内注释
+**按生成时 UI 语言出单语**——源语言为**英文**(`l10n/templates/en.ts` 英语源表,唯一英文权威),UI 语言
+`vscode.env.language` 经 `normalizeCommentLang` 归一(zh* → zh-cn)后从 `l10n/templates/` 语种表查注释,
+**同一文件内绝不中英混排**(根治市场 issue #5);未支持语言回退英文。**代码示例行、被注释掉的代码、
+XML 标签、官方 lint 测试原文不译**(保持内联)。键 = 稳定 ID,各语种表键集由 TS 编译期强制与 en 一致;
+横向扩展 = 新增语种表文件 + index 注册一行,模板零改动。守卫测试:`create-template-l10n.test.ts`
+(缺省 en 输出无 CJK 锁 + zh-cn 冒烟 + 缺省/显式 en 逐字节等价)。`meta.ts` 为纯值常量无散文,不入表。
+
 差异事实源:`手工重设计/gen-静态路径核实-2026-09-15.md`(C1/C2/C7)与 `手工重设计/12-发行版发现与gen模板分派-设计方案.md`。
 
 **③ 内容对齐(2026-09-29 二次裁定,纠正"无需版本分支"的初判)**:文本中立(禁其他版本说明)与内容对齐(随机器版本
@@ -73,6 +81,10 @@
 
 | 时间(精确到分) | 说明 |
 |---|---|
+| 2026-10-13 19:36 | **C++ 标准锁定块(用户裁定,按发行版分派)**:生成的 CMakeLists.txt 在 `project()` 之后、警告块之前插入 guard 块(`if(NOT CMAKE_CXX_STANDARD) → set(标准) + set(CMAKE_CXX_STANDARD_REQUIRED ON) → endif()`,外部 `-DCMAKE_CXX_STANDARD` 可覆盖)——标准值按发行版分派注入:dashing/eloquent/foxy=14,galactic~kilted=17,lyrical=20(官方矩阵,rclcpp 各分支逐行实锤);rolling/未知兜底 17;与 IntelliSense 栈(c++20)错位方向安全(解析≥编译);零 l10n(生成内容直改);测试 +5(distro 分派 3 例 + 块形态/位置/分派 2 例)。1350 用例 0 失败 |
+| 2026-10-12 22:29 | **py-node 补遗(方案 B,用户裁定)**:①Python 节点 docstring 入 L10N 表(moduleDocstring,en 现行英文/zh 新译)——修复 zh-cn 输出"英文 docstring + 中文注释"混排(L10N 轮漏项,用户实测发现);②shebang 按执行方式分派:`opts.directExec=true` 保留 `#!/usr/bin/env python3`(cpp-dual scripts / mixed 模块,经 install(PROGRAMS) 直装被 ros2 run **直接执行**,缺省 true 保守);`false` 不写(ament_python 模块经 console_scripts 入口点执行,setuptools 包装器自带 shebang)——多源核实:ROS2 未取消直执行 shebang 要求,非 ROS1 遗留;③测试:python 生成器断言翻转(无 shebang+docstring 开头)、cpp-dual 断言强化(startsWith)、l10n 守卫 +2 锁(zh docstring 中文化 / shebang 按执行方式分派)。1334 用例 0 失败 |
+| 2026-10-12 21:19 | **生成注释 L10N 落地(用户裁定「路线 2」)**:五模板(cmake/package-xml/cpp-node/py-node/py-setup)全部教学散文注释(~131 条)外置 `l10n/templates/`(en.ts 英语源 / zh-cn.ts 中文表 / index.ts 分派器,文件头均注明用途);渲染层按 `lang` 查表出**单语**生成物,`meta.ts` 纯值无散文不入表;命令层 `normalizeCommentLang(vscode.env.language)` → 生成层 `commentLang` 透传,缺省 en **逐字节等于历史英文版**;mixed 包 `__init__.py` docstring 一并入表;守卫测试 create-template-l10n.test.ts 5 例(en 无 CJK 锁/zh 冒烟×2/normalize 映射/缺省等价);「④ 语言口径」升级为"源语言英文+按 UI 语言单语输出"。1333 用例 0 失败 |
+| 2026-10-12 18:33 | **市场 issue #5 修复两批**:①cmake.ts double(:256)/single(:288)两分支英文注释行补行首 `#`(i18n 批14 ab04792 英文化时丢失,CMake 解析为裸标识符致 colcon build 必炸;5c6505b);②生成正文残留中文十处统一英文 + 新增「④ 语言口径:生成文件内注释一律英文」;测试零断言改动(create-cpp/create-python 全绿) |
 | 2026-09-29 22:34 | **③内容对齐落地(头文件布局按机分派,纠正 22:21"无需版本分支"初判)**:distro-templates 新增 `DISTRO_INCLUDE_LAYOUT`/`resolveIncludeLayout`(dashing~galactic=single 单层、humble~lyrical=double 双层、未知与 rolling=double 兜底,查表与模板表同覆盖);cmake.ts `CmakeSpec.includeLayout` 可选参 → 头文件块与 include 安装示例 if/else 双变体(single 单层形态:落点/导出根/INSTALL_INTERFACE 同值 include;两变体文本都版本中立、零"约定"概念——用户裁定"只提其一必引人追问其二");命令链 `create-package-command` 经 environmentFacade.getEnv() 注入;CppPackageConfig 透传。测试:distro +1(分派表覆盖与兜底)、create-cpp +1(single 三处同值 include + 无双层残留 + 无"约定"字样),五套 136 例全绿,tsc 干净 |
 | 2026-09-29 22:09 | **生成注释定稿(范本评审制,用户逐行纠后落码)**:AI 提案 + 用户八条裁定 → cmake.ts/py-setup.ts 注释全面重写(代码行零改动)——①接口块重设计(重实践:独立成包一句 + "同装同名 Python 模块会构建失败"一条简注,去 ⚠/机制链/官方最佳实践);②头文件块去"约定 B/同款/隐形炸弹"(生成注释不携带版本与约定标签,错配后果改技术表述"错误发生在下游");③Python 模块段落点改纯机制自解析(去 Humble/Iron 双版本标注——生成文件版本中立铁律);④新增 PROGRAMS 符号安装可执行位提示、测试段"①②+test_depend 联动"、colcon test-result、rclpy"构建期校验"说明;⑤py.typed 去版本号考据、zip_safe 一句话化;⑥"别忘了"→"还应该"(用户措辞)。同步:公共块断言'## colcon build 只构建不运行测试';create-cpp 53 + create-python 31 全绿,tsc 干净;口径节改版(见「生成注释口径」) |
 | 2026-09-29 18:07 | **注释版本核对(VD 联动)**:①修 cmake.ts Python 模块段注释错位(原"Humble: lib/python3.x/dist-packages"把 Humble 专有形态写成通用且漏 `local/` 前缀 → 机制自解析双形态标注);②py-node.ts 去"Humble 规范"锚定词(事实版本中立);③package-xml/setup/setup.cfg/cpp-node 核对零错位;新增本「注释版本口径」节(四条合法口径表);create-cpp 53 例(含 44 例字节对照)+ create-python 31 例全绿 |

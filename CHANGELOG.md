@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.0.3] - 2026-10-15
+
+### Added
+
+- **Package sidebar: install-truth health** — rows visually distinguish missing artifacts (red), broken symlinks (red) and missing sources (amber ⚠ badge); file rows show source and install modification times (merged into one for symlink rows), tooltips explain when a symlinked edit takes effect (rebuild for interfaces, recompile for headers, immediate for runtime files), and package hovers show the last build time; rows whose files disappeared are synthesized from build records instead of silently vanishing; clicking a row re-verifies it against disk and rescans the tree when stale;
+- **Package sidebar: leftover entries** — files still under `install/` that the latest build no longer declares (renamed executables, commented-out `setup.py` entry points) are detected, hidden by default and toggled with a title-bar eye button (`ROS2.ui.showLeftovers`); the leftover count stays visible in the view title;
+- **One-key run readiness (`Ctrl+F10`)** — warns when a target is compiled but not installed, and shows a non-modal "source newer than install" warning with a don't-show-again button (`ROS2.run.staleWarning`);
+- **Dependency picker** — builtin dependencies are now listed and pre-checked instead of hidden; candidate descriptions can be overridden via the user supplement index `ROS2.packages.userIndex`; `|` in descriptions can be escaped;
+- **Generated packages** — the generated `CMakeLists.txt` pins the C++ standard for the detected ROS 2 distribution (overridable via `-DCMAKE_CXX_STANDARD`); teaching comments in generated templates are localized (English / Simplified Chinese), including Python docstrings and shebang handling;
+- **IntelliSense entry overrides** — per-engine replacement tables `ROS2.ide.entryOverrides.clangd` / `.cpptools` / `.python` replace or delete individual generated entries (empty value = remove); an optional tidy mode (`ROS2.ide.clangdTidy`, default off) re-sorts the managed `.clangd` block and re-anchors its localized group comments;
+- Community standards files: issue/PR templates, code of conduct and security policy.
+
+### Changed
+
+- `ROS2.ide.intellisenseEngine` now defaults to `auto` (follow the installed engine(s)) instead of `both`;
+- `c_cpp_properties.json` maintenance is now minimal-touch and robust: the generated entry contains only `name` / `includePath` / `compileCommands`, and C++ standard fields are never written or rewritten (until the first build provides `compile_commands.json`, editors fall back to their own defaults — one build clears any squiggles); only the `ros2` entry is claimed, JSONC comments and trailing commas are tolerated, and all settings writes are serialized and atomic (temp file + rename);
+- Topic subscription (button and copied command) carries the message type, so a subscription started before the publisher comes online keeps receiving.
+
+### Fixed
+
+- The extension no longer writes `files.watcherExclude` / `search.exclude` / `python.analysis.exclude` into workspace `settings.json` (marketplace issue #3);
+- Generated `CMakeLists.txt`: teaching comment lines missing the leading `#` broke `colcon build` of freshly generated packages (marketplace issue #5); residual Chinese in generated files unified to English so non-Chinese UIs no longer produce mixed-language output;
+- The "Python package generated" notification showed a raw placeholder instead of the package name (marketplace issue #7);
+- Sidebar: the dangling-link icon was invisible on some VS Code versions, the leftover count was written to a slot the compact header doesn't render, and the eye button jumped sides of the refresh button when toggled;
+- `.clangd` managed block: managed entries deleted by hand or lost to history (e.g. `-std=c++20`) are re-injected on sync instead of being lost forever;
+- `c_cpp_properties.json` / `.clangd` changes announced in logs but not persisted (claim-stage writes were swallowed by the "no changes" gate) are now flushed to disk.
+
 ## [0.0.2] - 2026-10-07
 
 ### Added

@@ -10,8 +10,7 @@
 > (有感删除候选 = 事件差量 oldWorkspace−workspace,不再本地维护上一版;按类型分侧 + 弹窗前存在性预检;python 侧删除接线;
 > maintain-all:忽略包同样维护,分类翻转零动作;黑名单机制已移除——事件差量一次性判定下无重复骚扰可防)
 > → **09-15/16 安装布局感知(读 `install/.colcon_install_layout` 的内容 → isolated / merged 分别出条目;env 不再贡献
-> 本工作区路径;工作区 install/build 落点全部由本地静态模板生成;管辖内旧布局残留直接删除;settings.json 附带
-> workspace 排除键)**);本文为当前语义总说明,演进详情与实测依据见"关联文档"与 `手工重设计/` 下的手稿。
+> 本工作区路径;工作区 install/build 落点全部由本地静态模板生成;管辖内旧布局残留直接删除)**);本文为当前语义总说明,演进详情与实测依据见"关联文档"与 `手工重设计/` 下的手稿。
 
 ## 产出文件
 
@@ -19,7 +18,7 @@
 |:--|:--|:--|
 | `.vscode/c_cpp_properties.json` | cpptools | includePath = `src/<pkg>/include/**`(非 python 包,列全)+ **安装侧(按布局)**:isolated = `install/<pkg>/include/<pkg>/**` 每包一条(**多一层包名,杜绝 `<pkg>/<pkg>/…` 双层包名导入**)、merged = `install/include/**` 一条 + `/opt/ros/humble/include/**`。**`/**` 允许递归 → 死条目无害,故列全**;整块重排 + 字段补齐(compileCommands / cppStandard=gnu++20) |
 | `.clangd` | clangd | CompileFlags.CompilationDatabase(build)子键 + Add **四组**(注释行分隔):编译标志 / 工作空间包 include(`-I`) / **工作空间安装产物 include(按布局,注释文字随布局)** / 发行版 include(`-isystem`)。Add **没有通配递归** → 工作区安装侧**按包静态逐条写完整消费根**(不检测目录是否已存在);发行版侧包名事先未知,只能按前缀枚举子根 |
-| settings.json | Pylance | `python.autoComplete/analysis.extraPaths`(**两键同内容**)= 工作区 ament_python 包根 + **安装侧落点(按布局静态全量 + 按包类型分派)** + `build/<pkg>`(符号安装兜底)+ env(已剔除本工作区,只剩其他工作空间/系统);组序 **src → install/site-packages → build → install/local/dist-packages → /opt/ros**;另补 `files.watcherExclude` / `search.exclude` / `python.analysis.exclude` 三个排除键 |
+| settings.json | Pylance | `python.autoComplete/analysis.extraPaths`(**两键同内容**)= 工作区 ament_python 包根 + **安装侧落点(按布局静态全量 + 按包类型分派)** + `build/<pkg>`(符号安装兜底)+ env(已剔除本工作区,只剩其他工作空间/系统);组序 **src → install/site-packages → build → install/local/dist-packages → /opt/ros**(`files.watcherExclude` / `search.exclude` / `python.analysis.exclude` 三排除键 **2026-10-12 起一律不写**,见语义要点 python 节末注) |
 
 ## 文件清单
 
@@ -29,7 +28,7 @@
 | `intellisense-api.ts` | **接口层**(纯类型,零实现):`IntellisenseConfigOptions`(workspaceRoot / getState / environment 门面)/ `IntellisenseConfig`(sync / subscribe / dispose) | package-core/api(仅 type) |
 | `intellisense-config.ts` | **编排层**:引擎开关(`ROS2.ide.intellisenseEngine` = auto/cpptools/clangd/both/none)、800ms 防抖、两路事件订阅(包变化 + 环境变化;**无** include 目录监听——无条件收录,见语义 #2)、**maintain-all 差量消费(2026-09-08:事件 10 域,只订阅 workspace 域;有感候选 = oldWorkspace−workspace 事件差量,本地不维护上一版)**、**易增时每轮 `readInstallLayout()` 读布局并传给 cpp / clangd / python 三侧(2026-09-16)**、易增(无感)/难删(有感:**复核 → 按类型定侧(python 只走 extraPaths)→ 弹窗前存在性预检 → 60s 弹窗确认**(2026-09-08 由 10s 调长);确认计数/措辞以**包**为单位;黑名单机制已移除 2026-09-08) | utils / render、vscode |
 | `intellisense-utils.ts` | **工具层**(纯函数,可无头):collectPrefixes / collectSystemIncludes / collectPythonDirs(**自带本工作区剔除,2026-09-15**)、`clangdGroupDirs`(**三组行集:ws / install / sys**)、parseClangdAddEntries、absIncludeForPkg、recheckPackageAbsent、**orderPythonExtraPaths(python extraPaths 规范组序,2026-09-16 按手稿重排为 src→site-packages→build→dist→/opt/ros)**、isUnderWorkspace / isBuildArtifactEntry、**布局感知静态模板(`InstallLayout` / `parseInstallLayout` / `readInstallLayout`(读标记内容)/ `filterExistingDirs` / `amentPythonInstallDir` / `cmakePythonInstallDir` / `cppInstallIncludeDir`(子层·cpptools)/ `cppInstallIncludePrefix`(父层·clangd)/ `pythonDevelopDir` / `collectStaticPythonDirs` / `collectStaticCppIncludes(±Prefixes)`,2026-09-16)** | node:fs |
-| `intellisense-render.ts` | **渲染层**(写文件):`syncCppProperties` / `syncClangd(workspaceRoot, {ws, install?, sys}, layout)` / `syncPythonPaths(..., layout)`(**并集补缺失 + 整块规范重排,2026-09-09**;**管辖内旧布局/旧形状残留直接删除,2026-09-15**;**安装组独立分组 + 注释随布局、settings 排除键补写、孤儿分组注释清理,2026-09-16**) / 有感删除**预检**(2026-09-08:cppIncludeEntryExists / clangdIncludeExists / pythonPathExists,与 remove* 同口径) / `removeCppIncludes` / `removeClangdIncludes` / `removePythonPaths`;`.clangd` 块内破坏性归正(旧形态/重复/残留 /usr/include 清除)+ 组内补缺失;flow 保守 | utils、vscode |
+| `intellisense-render.ts` | **渲染层**(写文件):`syncCppProperties` / `syncClangd(workspaceRoot, {ws, install?, sys}, layout)` / `syncPythonPaths(..., layout)`(**并集补缺失 + 整块规范重排,2026-09-09**;**管辖内旧布局/旧形状残留直接删除,2026-09-15**;**安装组独立分组 + 注释随布局、孤儿分组注释清理,2026-09-16**) / 有感删除**预检**(2026-09-08:cppIncludeEntryExists / clangdIncludeExists / pythonPathExists,与 remove* 同口径) / `removeCppIncludes` / `removeClangdIncludes` / `removePythonPaths`;`.clangd` 块内破坏性归正(旧形态/重复/残留 /usr/include 清除)+ 组内补缺失;flow 保守 | utils、vscode |
 | `install-layout-watch.ts` | **安装布局信号监听**(2026-09-16 自 extension.ts 收编;组合根只组装):`registerInstallLayoutWatch({ workspaceRoot, onLayoutSignal, logger })` → ①`RelativePattern(root, "*")` 盯 **install 目录条目**(按名过滤;补充信号)②标记文件**以文件自身为 base**(`<ws>/install/.colcon_install_layout` + `*`,文件型非递归监视:不受 `files.watcherExclude` 影响;不存在时挂起轮询~5s 出现即合成 create;方案 2)③兜底轮询 `pollIntervalMs`(默认 60s,0 = 关闭;当前调用点暂设 0);1s 防抖 + 目录出现后 6s 有界补查;依赖可注入(`createWatcher` / `readMarkerContent`),可无头测试 | vscode、node:fs / node:path |
 
 ## 语义要点(2026-09-16 现状)
@@ -50,7 +49,7 @@
   - **兜底轮询(`pollIntervalMs` 默认 60s,0 = 关闭;当前调用点暂设 0 = 验证期禁用)**:读一次标记(≤9 字节)内容,变了才重算。
   - **勘误(2026-09-16,按 VS Code 1.124.2 源码逐条核实)**:01:23/01:30 两行的根因表述**不成立**——
     "注册时父目录不存在 ⇒ watcher 死 / 锚在目标自身"是误诊(监听目标恒为 base,pattern 只是扩展侧过滤器);
-    真正闸门是"**模式含斜杠 ⇒ 递归 watcher ⇒ 自动吃 files.watcherExclude**"(排除项由本扩展自己写入 install 子树)。
+    真正闸门是"**模式含斜杠 ⇒ 递归 watcher ⇒ 自动吃 files.watcherExclude**"(排除项系旧版扩展写入 install 子树,残留仍会命中)。
 ②用户命令 `ROS2.regenerateIntellisenseConfig`(补写缺失,非强行覆盖)。所有入口都走同一条"读内容 → 按 isolated/merged
 出条目"的路径。
 **构建完成信号不归本域**:`install/setup.bash`(colcon 每次调用必重写)由 `ros2/environment` 域监听并触发
@@ -130,14 +129,24 @@ cppStandard 旧默认 gnu++17 → gnu++20(与 .clangd 对齐)。2026-09-15:env �
 ⑤ install/…/local/dist-packages → ⑥ /opt/ros 官方置尾**;同组保持原相对顺序(稳定,不 churn)。
 **管辖外条目(用户自加,可位于任意位置)不参与排序/比较**:以原相对顺序保留在队尾,用户增删/调序队尾不触发
 重写;**但本工作区 install/build 派生条目若不在新集合中 = 旧布局/旧形状残留 → 直接删除**(2026-09-15 起不再
-留队尾;cpp includePath / .clangd Add / python extraPaths 三处同规则)。另:settings.json 会补写三个排除键
-(`files.watcherExclude` / `search.exclude` 对象补 `true`,`python.analysis.exclude` 数组追加),只补缺失、不动用户已有值。
+留队尾;cpp includePath / .clangd Add / python extraPaths 三处同规则)。另:settings.json 的 `files.watcherExclude` /
+`search.exclude` / `python.analysis.exclude` 三个排除键 **2026-10-12 起一律不写**(用户裁定:排除与否属个人工作区偏好,
+扩展不代写;历史实现"合并视图做底 + 整对象写回 Workspace"曾把 VS Code 内置默认条目与全局层既有条目随三条 glob
+一并写进工作区 settings.json,残留由用户自行清理)。
 语义:同名冲突时"你的包"胜、实体安装陈旧时分析器看新版——与 C++ `-I` 同思路(Python 无 -isystem 告警抑制,排序纯加分无副作用)。
 
 ## 演进简表
 
 | 时间(精确到分) | 关键变化 | 详档 |
 |---|---|---|
+| 2026-10-15 00:40 | **认领落盘修复 + 串行 + 原子写 + 测试假绿根治(用户实测"日志说改了,文件没改",裁定"原子性必须做,串行必须做,而且需要进行测试")**:①认领变更(建数组/追加/去重/补 version)引入 `claimChanged`,写盘条件 = claimChanged‖pathChanged——追加/去重曾只改内存,includePath 恰好无需变化时被"无变化"闸门吞掉(无头复现实锤);②cpp/clangd 同步与有感删除全部入单飞链(per-root 串行,读-改-写竞态消除);③`writeFileAtomic`(临时文件+rename)替换全部 cpp/clangd 直接写(断电不产半截文件);④**测试假绿根治**:render 组整组跳过拆除——stub 旗标在集成宿主不置 → before 整组 skip → junit 空壳(tests=37/零 testcase/time=0.000)被误读为"全过",本会话 render 层四批用例实际一条未跑;改为 cpp/clangd 用例双宿主真跑 + python 依赖用例逐用例守卫跳过;tidy 用例 token 视图修 indexOf 撞位;无头复跑 46/0、npm test render 31 实跑 0 失败(6 python 用例按设计跳过) | 本文 + intellisense-render.ts 尾注 |
+| 2026-10-14 23:50 | **c_cpp_properties 标准字段收缩(用户裁定"极其克制",所有权移交用户)**:从零生成/追加成员缩为三键(name/includePath/compileCommands,browse·cppStandard·cStandard·intelliSenseMode·compilerPath 不再写);补写字段补齐/升级整段废除(compileCommands 不再补、cppStandard 不再强写也不再把用户手写的 gnu++17 强翻 gnu++20、cStandard 不再补),补写只动 includePath;CPP_DEFAULT_CPP_STANDARD 常量废除;存量 gnu++20 不回收;`.clangd` 的 -std=c++20 同性质缩减另案 | 本文 + intellisense-render.ts 尾注 |
+| 2026-10-14 23:20 | **c_cpp_properties 补写鲁棒化(用户裁定,修"删 includePath 键 → browse 陪葬+键序重排"案)**:①管理权白名单——只接管第一个 `name===\"ros2\"` 成员,没找到追加到数组末尾(不抢 [0]),重复 ros2 保留最前其余删除;用户自有成员/顶层自定义键零接触;②外科手术——parse 成功后禁止整体替换,补字段全在原对象上做(JSON.parse 保键序);③宽容解析链——严格 JSON.parse → jsonc-parser(注释/尾逗号,提升为直接依赖 ^3.3.1)→ 两连败才从零生成(唯一弃稿场景,宽容命中日志声明丢注释);单飞/原子写暂缓(未暴露) | 本文 + intellisense-render.ts 尾注 |
+| 2026-10-14 22:30 | **接管排序 `ROS2.ide.clangdTidy`(新设置键,默认关,用户裁定"默认不接管,防止影响用户使用")**:受控推翻 2026-09-07"不整块重排"裁定——开启后 block 形态同步在归正后做 `tidyClangdAddLines` 纯函数重建(管辖行规范组序 标志→ws→install→sys + 重钉当前语言分组注释 + 用户行/用户注释原序移尾;已规范零写盘,flow 不重排,效果单向);分组注释同步 L10N 化(用户点名):双语表(zh 逐字节同历史/en 源),生成/重钉按 UI 语言输出,匹配恒收全语言全布局变体 | 本文 + intellisense-render.ts 尾注 |
+| 2026-10-14 16:40 | **替换表三文件拆分(同日返工,用户裁定)**:单一合并键 `ide.entryOverrides` 拆为 `ide.entryOverrides.clangd / .cpptools / .python` 三键(ide 组 order 2/3/4)——理由:①合并表 key 空间跨文件可能撞,作用范围靠"恰好匹配哪个文件的格式"是涌现行为,分表变显式声明(撞 key 结构性不可能);②三套精确定义文法混居一张设置表,描述三合一、写错格式静默不命中(UI 债);③引擎门控自然化(cpp 表随 cpptools 侧/clangd 表随 clangd 侧消费,python 表不门控)。链式不动点/两遍法/表盲红线三语义原样;三纯函数与三 sync 主体零改动,常量一变三、applyAdditions 分路由读三键;未打包未上架零迁移负担 | 本文 + intellisense-render.ts 尾注 |
+| 2026-10-14 15:20 | **生成条目替换表 `ROS2.ide.entryOverrides`(新设置键,object)**:key = 生成条目的程序级精确定义值(.clangd = 剥 `- ` 前缀裸 token;includePath/双 extraPaths = 完整条目串),value = 替换串逐字用(不自动补 `-`),空串 = 删除;**链式解析至不动点**(A→B→C 单次同步直达 C,零时间波动;环剔除+warn);两遍法落位(**原生条目优先占位,撞车丢映射副本留原生**);范围 = clangd 四组 Add token / cpp includePath / 双 extraPaths,`cppStandard`/`compileCommands`/`CompilationDatabase` 排除;**表盲红线**:有感删除 remove* 与预检不感知本表(只字面量匹配);文件侧旧形态原位替换或清除,不经"管辖外/用户条目"残留通道回流(16:40 行:同日拆分为三键) | 本文 + intellisense-render.ts 尾注 |
+| 2026-10-13 19:36 | **distro-templates 第三张表:C++ 标准分派(用户裁定)**:`DISTRO_CXX_STANDARD` + `resolveCxxStandard`(官方矩阵 dashing/eloquent/foxy=14,galactic/humble/iron/jazzy/kilted=17,lyrical=20[rolling 集中式 ament_ros_defaults=C++20 上游];rolling/未知兜底 17)——create 域消费:生成 CMakeLists 增 guard 块(`if NOT → set + REQUIRED`,外部 `-DCMAKE_CXX_STANDARD` 可覆盖);kilted/rolling 分支 rclcpp 逐行实锤 | 本文 + cmake.ts 模板 |
+| 2026-10-12 20:38 | **settings.json 三排除键写入彻底移除(用户裁定)**:排除与否属个人工作区偏好,扩展不应触碰 `files.watcherExclude` / `search.exclude` / `python.analysis.exclude` 任何形式;旧 `ensureWorkspaceExcludeSettings` 以"合并视图做底 + 整对象写回 Workspace"补三条 glob,实际把 VS Code 内置默认条目与全局层既有条目一并写进工作区 settings.json(issue #3 泄露清单整块即其产物);历史残留不主动清理 | 本文 + intellisense-render.ts 尾注 |
 | 2026-09-02 10:12 | 原 build-env-utils 重设计:api/utils/render/blacklist/config 五层;环境变化事件追踪、有感删除、黑名单、引擎开关(事件源仅包+环境两路;10:46 加的 include watcher 10:49 即删——无条件收录、不做存在性检测) | package-service/README.md 修改记录 |
 | 2026-09-05 10:16 | 6 包复杂环境复测(普通/混合/rosidl 接口包 + symlink/entity 混装):命中 100%;当时 clangd 靠"顶层+一级子层全列"同时兼容 A/B | 复测报告 md |
 | 2026-09-06 18:35 | CompilationDatabase 收编 CompileFlags 子键;Add 分组(标志/ws/env,注释分隔);env 归 `-isystem`;管辖内破坏性归正;收 /usr/include;cppStandard gnu++20 | package-service/README.md 修改记录 |
@@ -170,6 +179,12 @@ cppStandard 旧默认 gnu++17 → gnu++20(与 .clangd 对齐)。2026-09-15:env �
 
 | 时间(精确到分) | 说明 |
 |---|---|
+| 2026-10-15 00:40 | **认领落盘修复 + 串行 + 原子写 + 测试假绿根治(用户裁定)**:①`syncCppProperties` 拆壳入 `enqueueSettingsWrite`(Inner 化),认领段四处置 `claimChanged`(建数组/追加/去重/version 补),写盘条件 `claimChanged || pathChanged`,日志增"认领变更落盘"段;`syncClangd`/`removeCppIncludes`/`removeClangdIncludes` 同款拆壳入链;②新 `writeFileAtomic(filename, content)`(tmp+rename),替换 cpp/clangd 全部 10 处直接写;③测试:`intellisense-config.test.ts` 拆整组 before-skip(空壳假绿根治)+ 模块级 `HEADLESS` 旗标 + python 依赖 5 用例逐例守卫(集成宿主 python.* 不可写)+ beforeEach python 复位加 catch;tidy 用例 body 改 token 视图(剥 "- " 前缀,修 indexOf 撞位断言失真);JSONC 用例改语义(stale includePath 制造真实变更触发重写,断言注释丢失+数据保留);验证:无头 mocha 46/0(4 失败清零),npm test render 组 31 实跑/0 失败(time 1.242s,原空壳 0.000),全套 1383/0 |
+| 2026-10-14 23:50 | **标准字段收缩(用户裁定)**:①`freshRos2Config` 缩为三键(name/includePath/compileCommands),browse 块与 Linux 三键分支删除;②正常路径"字段补齐/升级"段(compileCommands 补/cppStandard 缺失强写+gnu++17 强翻 gnu++20/cStandard 补+fieldChanges 机制)整段废除——调查坐实 cppStandard 每轮强写强翻(用户手写 gnu++17 也被翻);③`CPP_DEFAULT_CPP_STANDARD` 常量废除,从零生成 log 去 cppStandard 尾巴,头注释两段改写;④测试 5 处断言改写(首次生成三键形状 deepStrictEqual/已存在 gnu++17 保留+compileCommands·cStandard 不出现/用户 cppStandard 永不触碰含 gnu++17 双段/鲁棒化接管保留 gnu++17/报废重建三键形状),例数保持 1383/0 |
+| 2026-10-14 23:20 | **c_cpp_properties 补写鲁棒化(用户裁定,根因=旧"结构异常→整体重建"分支把"合法 JSON 只缺 includePath 键"也当损坏,内置字面量整写致 browse 陪葬+键序重排)**:①解析链三段:严格 JSON.parse → jsoncParser.parse 宽容(注释/尾逗号;依赖提升 jsonc-parser ^3.3.1 直接依赖)→ 两连败/顶层非对象才从零生成(`freshRos2Config` 助手,含 browse,消字面量重复);②ros2 成员认领:`configurations` 非数组原对象建数组,找首个 `name===\"ros2\"` 接管,未找到 push 末尾(用户 [0] 零位移),重复成员清理保留最前,`version` 缺失补 4;③includePath 键缺失/非数组 → 外科补字段(browse/其余字段/键序原样,includePath 尾插);④正常合并路径 cfg0→cfg 仅换作用对象,逻辑零改动;测试 +6(接管零接触/追加末尾/重复清理/外科补字段/JSONC 宽容/报废重建),1383/0 |
+| 2026-10-14 22:30 | **接管排序 + 分组注释 L10N(用户裁定)**:①`intellisense-render.ts` 旧 `ADD_*` 中文常量退役 → `CLANGD_MARKERS` 双语表(zh 逐字节同历史——存量中文标记文件匹配依赖;en 源)+ `clangdMarkerOf`/`currentMarkerLang`(`normalizeCommentLang(vscode.env.language)`)+ `ALL_MARKER_VARIANTS` 全变体匹配(dropOrphanedAddMarkers/组定位/孤儿清理全换);②新纯函数 `tidyClangdAddLines(lines, addIdx, blockEnd, managed, lang, layout)`(管辖行=替换表解析后四组 token,组序重排+重钉注释;外行/用户注释原序移尾;标记行与空行不带入;已规范返回 null);③`syncClangd` block 路径:`tidyOn = getClangdTidyEnabled()` 开 → 重建替代"孤儿清理+组内插入"(缺失补入天然覆盖);关 → 原路径逐字节一致;设置常量 `CLANGD_TIDY_SETTING="ide.clangdTidy"`(package.json order 5+双 nls+docs 双语,描述含"用户行移尾/效果单向"两交底);④测试:文件头 5 个标记常量改从双语表按 currentMarkerLang 取(集成宿主 --locale=en → en)+3 用例(双语表逐字节/tidy 纯函数/集成 开关对照+幂等零写盘) |
+| 2026-10-14 16:40 | **替换表三文件拆分(同日返工)**:①`intellisense-render.ts` 常量一变三(`ENTRY_OVERRIDES_CLANGD/CPPTOOLS/PYTHON_SETTING`),常量段头注释改"三键分辖三文件、撞 key 结构性不可能";三 sync 注释各补本文件键名归属,签名与主体逻辑零改动;②`intellisense-config.applyAdditions` 读设置一次变三次(局部 `readOverrides` 助手容错非对象),cppOv/clangdOv/pythonOv 分路由透传,debug 日志报三表条数;applyRemovals 仍不透传任何表(红线);③设置管线:package.json ide 组 1 键换 3 键(order 2/3/4),双 nls 1 描述换 3 段单一文法短描述(clangd/cpptools 段注明"仅在维护该侧时消费"),docs 双语 configuration.md 表 1→3 行 + intellisense.md 句改写;④测试:键名锁 1 例改 3 断言,纯函数 5 例与集成 5 例零改动(表是入参,例数保持 1370)。**不迁移**:cd8211e 未打包未同步未上架,旧合并键无存量用户 |
+| 2026-10-14 15:20 | **生成条目替换表 `ROS2.ide.entryOverrides` 接入三 sync(冻结域解冻:仅三 sync 的集合构造段,归正/预检/有感删除逻辑本体零改动)**:①`intellisense-render.ts` 新增纯函数 `applyEntryOverrides`(`resolveChain` visited 集合防环,链末 `""` → 剔除入 dropped,环 → 剔除+warn)+ `overrideKeySet`(非字符串值 = 无规则容错)+ 导出键常量 `ENTRY_OVERRIDES_SETTING`;②`syncCppProperties`/`syncClangd`/`syncPythonPaths` 各增末位可选参 `overrides`(缺省 `{}` = 关闭,既有 1359 断言零迁移)——cpp:canonical 过表 + 文件循环增 `ovKeys` 分支(替换表管辖旧形态不经"管辖外条目"通道回流队尾);clangd:四组 token 各自过表(行集以解析后为准)+ 管辖归正循环增替换表管辖分支(token ∈ 表 → 链式解析原位替换/空值·环删行/替换值已有行丢映射副本);python:rawMerged 过表 + syncKey 残留过滤增 ovKeys 排除(src 包根非构建产物,不走既有 install/build 残留通道);③`intellisense-config.applyAdditions` 每轮读一次设置(非对象值容错空表)末参透传三 sync;**applyRemovals 不透传保持表盲(红线)**;④设置管线:package.json ide 组 order 2(object,默认 `{}`)+ 双 nls + docs 双语(configuration.md 表行 + intellisense.md 一句);⑤单测 +8(键名锁/纯函数链式·空值·环·自映射·撞车/clangd -std 原位收敛幂等 + -I 空值删行清注释/cpp 空值移除 + 替换落位不回流/python 替换生效) |
 | 2026-09-28 17:27 | **发行版模板分派(VD 批次,设计方案 `手工重设计/12`)**:①新增 `distro-templates.ts`——`DISTRO_PATH_TEMPLATES` 模板表(humble=VM 实测专有 `local/lib/python3.10/dist-packages`;iron/jazzy/kilted/lyrical=`lib/<abi>/site-packages`(手稿 C2,源码级);dashing/eloquent=python3.6、foxy/galactic=python3.8(EOL 备查,2026-09-28 网络核实,两老发行版均按 bionic/focal 系统 python 构建);**rolling 维持排除**——不进环境域白名单、不进表,2026-09-28 用户裁定);`observePythonAbi` 从 env.PYTHONPATH 观测 python3.\d+ 完整目录段(/opt/ros 系统段优先,任意段兜底;解 iron jammy/noble 双装歧义);`resolveDistroConfig` = 查行 + 观测覆盖(**观测优先,表兜底**,2026-09-28 用户裁定;观测覆盖时 cmakePythonPurelib 的 ABI 段连带替换、purelib 形态沿用表行;未知发行版/无 env 整体回落 DEFAULT,观测不组合)。②接线:`intellisense-config.applyAdditions` 每轮解析并打日志(distro/ABI/来源),`syncPythonPaths` 加可选 `tpl` 参透传 `collectStaticPythonDirs`(缺省 = DEFAULT,向后兼容);发行版切换后旧形状条目由既有"旧形状残留直接删除"机制自动清替,零新增事件/配置键(package.json 零改动)。③测试:新增 `test/suite/distro-templates.test.ts`(7 例)+ config 套件 +1(28→29,模板透传与切回清替),既有 `DEFAULT_PATH_TEMPLATE === HUMBLE` 断言保留。④头文件布局/系统 include 组/`-std` 经核实**无发行版差异,不进模板**(约定 B 自 Humble 起一致:rosidl `DESTINATION include/${PROJECT_NAME}/${PROJECT_NAME}` + Jazzy 佐证;sys 组走 env 前缀天然自适应) |
 | 2026-09-16 02:41 | **监听改造收口(方案 2)+ 勘误 + 文档同步**:①标记 watcher 改为**以文件自身为 base** 的文件型非递归监视——事件显式跳过 excludes/includes 检查、不受 `files.watcherExclude` 影响;文件不存在时挂起 + `fs.watchFile` 轮询(~5s),出现即合成 create 并转入正式监视;注册即常驻(删除 `dirExists` 与补挂逻辑)。②目录条目 watcher 降级为补充信号。③轮询保留默认 60s,当前调用点暂设 `pollIntervalMs: 0`(验证期禁用兜底,先只验 watcher 通路)。④勘误 01:23/01:30 行:"父目录不存在/锚在目标自身"不成立;真闸门 = 模式含斜杠 ⇒ 递归 watcher ⇒ 自动吃 `files.watcherExclude`。⑤文件清单行与语义要点 §1 同步;单测 9 例全绿 |
 | 2026-09-16 01:30 | **锚点改"工作区根条目松匹配 `*`"(用户实测给出规律:启动时 install/ 不存在→出现能触发;已存在时删掉再建不触发)**:①`install-layout-watch.ts` 的目录 watcher 由 `RelativePattern(root, "install")` 改为 `RelativePattern(root, "*")` + 回调里按条目名过滤 `install`。根因:watcher 的锚定方式取决于**注册时目标是否存在**——目标不存在时它锚在父目录(所以"从无到有"能报),目标已存在时它锚在目标自身(目录一被删 watcher 即死、不会重挂,所以"删了再建"不报)。改成松匹配后锚永远在工作区根(自身永不被删),两种情况都收得到。②用户该次日志已确认新版加载成功(`[extension] 已注册配置重算信号监听:/home/ros2/roa2_ws/install(目录条目)+ install/.colcon_install_layout(标记,按需)`)。③单测 8 → 9 例(新增"根目录里非 install 条目的增删被忽略";锚点断言改为 `/ws|*`),三套合计 **51 例全绿**,`tsc` 干净 |
@@ -207,6 +222,12 @@ cppStandard 旧默认 gnu++17 → gnu++20(与 .clangd 对齐)。2026-09-15:env �
 <!-- 文件末尾修改时间:2026-09-16 01:04(监听面收窄:只监听 .colcon_install_layout,setup.bash 归环境域,详见上表 01:04 行) -->
 <!-- 文件末尾修改时间:2026-09-16 01:08(监听锚点搬到工作区根:install 目录条目 + 标记文件双 watcher,详见上表 01:08 行) -->
 <!-- 文件末尾修改时间:2026-09-16 01:12(监听实现收编为 gen/install-layout-watch.ts,ext 只组装,详见上表 01:12 行) -->
-<!-- 文件末尾修改时间:2026-09-16 01:23(加兜底轮询 pollIntervalMs=60s;watcher 通道受 watcherExclude 反转影响不可靠,详见上表 01:23 行) -->
+<!-- 文件末尾修改时间:2026-10-12(settings.json 三排除键写入彻底移除,详见演进简表 2026-10-12 行;前次:2026-09-16 01:23 加兜底轮询) -->
+<!-- 文件末尾修改时间:2026-10-14(生成条目替换表 ROS2.ide.entryOverrides 接入三 sync,详见演进简表/修改记录 2026-10-14 行) -->
+<!-- 文件末尾修改时间:2026-10-14 16:40(替换表同日拆分为三键 ide.entryOverrides.clangd/cpptools/python,详见演进简表/修改记录 16:40 行) -->
+<!-- 文件末尾修改时间:2026-10-14 22:30(接管排序 clangdTidy 默认关 + 分组注释 L10N 双语表,详见演进简表/修改记录 22:30 行) -->
+<!-- 文件末尾修改时间:2026-10-14 23:20(c_cpp_properties 补写鲁棒化:ros2 白名单接管+外科手术+JSONC 宽容解析,详见演进简表/修改记录 23:20 行) -->
+<!-- 文件末尾修改时间:2026-10-14 23:50(标准字段收缩:生成三键/补写只动 includePath/废除强写强翻,详见演进简表/修改记录 23:50 行) -->
+<!-- 文件末尾修改时间:2026-10-15 00:40(认领落盘修复+串行+原子写+测试假绿根治,详见演进简表/修改记录 00:40 行) -->
 <!-- 文件末尾修改时间:2026-09-16 01:30(目录 watcher 改工作区根条目松匹配 *:修"注册时 install/ 已存在→删了再建不报",详见上表 01:30 行) -->
 <!-- 文件末尾修改时间:2026-09-16 02:41(监听改造收口(方案 2)+ 勘误 + 文档同步,详见上表 02:41 行) -->

@@ -67,6 +67,7 @@ export {
     readInstallLayout,
     sourceFromRules,
     sourceFromRulesRef,
+    synthesizeVanishedRows,
 } from "./scan/installed";
 export { discoverBuildPackages, inferType, readTraits } from "./scan/packages";
 export {

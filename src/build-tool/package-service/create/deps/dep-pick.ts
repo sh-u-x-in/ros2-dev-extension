@@ -36,10 +36,10 @@ import { l10n } from "vscode";
 import * as vscode from 'vscode';
 
 import { getLogger } from '../../../../logger';
-import { DepCheckKind, parseDepList, validateDepList, depAnnotation } from './dep-parse';
+import { DepCheckKind, parseDepList, validateDepList, depAnnotation, DEP_BUILTIN } from './dep-parse';
 import { mergeDeps, validateFinal, excludeBuiltin } from './dep-merge';
 import { depDescription } from './dep-catalog';
-import { isPythonDep, isWorkspaceDep, makeLangContext, unionCandidateNames, DepLangContext } from './dep-lang';
+import { isPythonDep, isWorkspaceDep, makeLangContext, unionCandidateNames, DepLangContext, descriptionOverrideOf, USER_INDEX_SETTING } from './dep-lang';
 import type { PackageEntry } from '../../../package-core/shared/types';
 import { packageCore } from '../../../../extension';
 import { composeApi } from '../../../../ros2/api';
@@ -120,6 +120,7 @@ async function pickMulti(
     kind: DepCheckKind,
     ctx: DepLangContext,
     flow: string,
+    userIndex: Record<string, string>,
 ): Promise<{ labels: string[]; wantsCustom: boolean } | undefined> {
     const items: DepPickItem[] = [
         {
@@ -129,14 +130,32 @@ async function pickMulti(
             picked: previousWantsCustom,
             isCustom: true,
         },
-        // 循环:候选(工作区已确认包在前, 环境可见包在后; 内置依赖自动隐藏, 勾了也会被 mergeDeps 静默过滤)
-        //   description = 作用说明(A 粒度, dep-catalog; C4/C5 → 类别标记)
-        //   detail     = 来源/语言/升级跨体系标注(勾选不拦截, 显式校验兜底)
+        // 内置依赖段(2026-10-12 用户裁定,改"自动隐藏"为"显示 + 预勾选徽标"):
+        //   动机 = 用户搜索内置包(如 rclcpp)无命中, 误判扩展/环境故障;显示为预勾选后可被搜索命中。
+        //   "取消无效"语义由既有机制保证: 生成器无条件写入内置依赖, mergeDeps 也恒过滤 extra——
+        //   用户即便点掉勾, 生成物不变(QuickPick 无禁用项, 故以徽标预告而非强制回勾)。
+        //   picked 恒 true(不随 previousPicked 回退——内置永远在)。
+        ...DEP_BUILTIN[kind].map((name) => ({
+            label: name,
+            description: depDescription(name),
+            detail: l10n.t('[built-in: always included, whether checked or not]'),
+            picked: true,
+        })),
+        // 循环:候选(工作区已确认包在前, 环境可见包在后; 内置依赖以"已自动选择"形态单列于上方)
+        //   description = 用户覆盖(2026-10-13 ROS2.packages.userIndex 命中时)> 作用说明(A 粒度, dep-catalog; C4/C5 → 类别标记)
+        //   detail     = 来源/语言/升级跨体系标注(勾选不拦截, 显式校验兜底); 用户 py 前缀强制 [纯 Python 包] 标注
         ...excludeBuiltin(candidates, kind).map((name) => {
             const markers = depMarkers(name, kind, ctx);
+            const ov = descriptionOverrideOf(userIndex, name);
+            if (ov?.py) {
+                const pyBadge = l10n.t('[pure Python package]');
+                if (!markers.includes(pyBadge)) {
+                    markers.push(pyBadge);
+                }
+            }
             return {
                 label: name,
-                description: depDescription(name),
+                description: ov?.description ?? depDescription(name),
                 detail: markers.length > 0 ? markers.join('  ') : undefined,
                 picked: previousPicked.includes(name),
             };
@@ -185,6 +204,8 @@ export async function pickDeps(kind: DepCheckKind, flow: string): Promise<PickDe
     logger.debug(`弹窗:选择额外依赖(${kind})`);
     const candidates = await fetchCandidates();
     const ctx = langContext();
+    // 用户补充索引(2026-10-13):键 = 包名,值 = "[py|]描述"——命中候选时覆盖 description、py 强制标注
+    const userIndex = vscode.workspace.getConfiguration("ROS2").get<Record<string, string>>(USER_INDEX_SETTING, {});
     if (candidates.length === 0) {
         return legacyInput(kind, ctx, flow); // 降级: 两侧都无候选 → 现状输入框
     }
@@ -192,7 +213,7 @@ export async function pickDeps(kind: DepCheckKind, flow: string): Promise<PickDe
     let previousWantsCustom = false;
     // 循环:显式校验失败 → 弹错 → 重开多选(保留上次勾选);取消 → 终止
     for (;;) {
-        const picked = await pickMulti(candidates, previousPicked, previousWantsCustom, kind, ctx, flow);
+        const picked = await pickMulti(candidates, previousPicked, previousWantsCustom, kind, ctx, flow, userIndex);
         if (picked === undefined) {
             return null; // Esc → 终止
         }

@@ -205,7 +205,9 @@ describe('generateCppPackageFiles: cpp-dual (双语言节点包)', () => {
     it('Python 脚本节点节点名正确', () => {
         const py = contentOf(files, 'scripts/py_node.py');
         assert.ok(py.includes("super().__init__('py_node')"));
+        // cpp-dual 脚本经 install(PROGRAMS) 直装 lib/<pkg>/ 被 ros2 run 直接执行 ⇒ 必须写 shebang(方案 B)
         assert.ok(py.includes('#!/usr/bin/env python3'));
+        assert.ok(py.startsWith('#!/usr/bin/env python3\n"""'));
     });
 });
 
@@ -283,6 +285,27 @@ describe('generateCppPackageFiles: includeLayout=single (按机分派, 单层形
         assert.ok(cm.includes('$<INSTALL_INTERFACE:include>'), 'INSTALL_INTERFACE 应为 include');
         assert.ok(!cm.includes('include/${PROJECT_NAME}/${PROJECT_NAME}'), 'single 下不得有双层落点');
         assert.ok(!cm.includes('约定'), '文本不携带约定概念');
+    });
+});
+
+describe('generateCppPackageFiles: C++ 标准锁定块(2026-10-13)', () => {
+    it('缺省(17):guard 块形态正确,位于 project 之后、警告块之前', () => {
+        const files = generateCppPackageFiles({ packageName: 'my_cpp', kind: 'cpp-only' });
+        const cm = contentOf(files, 'CMakeLists.txt');
+        assert.ok(cm.includes('if(NOT CMAKE_CXX_STANDARD)'), 'guard 条件缺失');
+        assert.ok(cm.includes('  set(CMAKE_CXX_STANDARD 17)'), '缺省应为 17');
+        assert.ok(cm.includes('  set(CMAKE_CXX_STANDARD_REQUIRED ON)'), 'REQUIRED 缺失');
+        const pProject = cm.indexOf('project(my_cpp)');
+        const pGuard = cm.indexOf('if(NOT CMAKE_CXX_STANDARD)');
+        const pWarn = cm.indexOf('# ---- Compile options: enable warnings ----');
+        assert.ok(pProject !== -1 && pGuard > pProject && pWarn > pGuard, 'guard 块应在 project 之后、警告块之前');
+    });
+
+    it('cxxStandard 注入:块值随分派(14 对齐 dashing~foxy 段),且不残留其它标准值', () => {
+        const files = generateCppPackageFiles({ packageName: 'old_pkg', kind: 'cpp-only', cxxStandard: "14" });
+        const cm = contentOf(files, 'CMakeLists.txt');
+        assert.ok(cm.includes('  set(CMAKE_CXX_STANDARD 14)'));
+        assert.ok(!cm.includes('  set(CMAKE_CXX_STANDARD 17)'));
     });
 });
 

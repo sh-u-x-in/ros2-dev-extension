@@ -322,6 +322,8 @@ export interface SidebarRow {
     /** 该行是**经哪条上游目录软链**进来的(扩大成因) */
     viaLinkDomain?: "src" | "build" | "outside";
     dangling?: boolean;
+    /** 残留(2026-10-14):lib 区行,最近一次构建的声明已不认 —— 展示侧默认隐藏,眼睛按钮切换 */
+    leftover?: boolean;
     executable?: boolean;
     /** 绝对落点 */
     installPath: string;
@@ -340,6 +342,8 @@ export interface SidebarPackageView {
     installForm?: "symlink" | "copy" | "unknown";
     /** 包**构建类型**(`BuildPackage.type`,即 `inferType`:`ament_cmake|ament_python|cmake|python-or-unknown`;包不在 packages 表 → undefined) */
     buildType?: BuildTypeName;
+    /** 最近一次构建时刻(colcon_build.rc mtime;纯展示,**不参与指纹**;未构建/未读到 = undefined) */
+    buildTimeMs?: number;
     rows: SidebarRow[];
 }
 
@@ -411,6 +415,7 @@ export function rowsOf(pkgAreas: PackageAreas, jumps?: JumpEntry[]): SidebarRow[
             linkDomain: f.linkDomain,
             viaLinkDomain: f.viaLinkDomain,
             dangling: f.dangling,
+            leftover: f.leftover,
             executable: f.executable,
             installPath: f.installPath,
         };
@@ -636,12 +641,15 @@ export class ExecutableResolver {
         }
         const rows = rowsOf(pkgAreas, snapshot.jumps.get(pkg));
         // 2026-09-25(第三批):包级属性随视图下发 —— 安装类型以 install 观察为准,构建类型取 build traits
+        // 2026-10-14:构建时间(rc mtime)随视图下发(纯展示,不参与指纹)
+        const rcMs = snapshot.buildTimes?.get(pkg);
         return {
             pkg,
             prefix: pkgAreas.prefix,
             layout: pkgAreas.layout,
             installForm: installFormOf(rows),
             buildType: snapshot.packages.get(pkg)?.type,
+            buildTimeMs: rcMs !== undefined && rcMs > 0 ? rcMs : undefined,
             rows,
         };
     }

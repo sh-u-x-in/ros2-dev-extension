@@ -88,7 +88,15 @@ export const AREA_LABEL: Record<DisplayArea, string> = {
 export const AREA_ORDER: DisplayArea[] = ["lib", "launch", "import", "share", "include"];
 
 /** 展示行 = truth 行,但 area 放宽为展示区(launch 区的行经提升改写;树模型各入口统一收这个形状) */
-export type DisplayRow = Omit<SidebarRow, "area"> & { area: DisplayArea };
+export type DisplayRow = Omit<SidebarRow, "area"> & {
+    area: DisplayArea;
+    /** 源失效标记(2026-10-13,装配层 fs 检查注入):sourcePath 非空但文件不存在 —— C 类错误行 */
+    sourceMissing?: boolean;
+    /** 源文件修改时间(2026-10-13,装配层 stat 注入;源缺失/未解析 = undefined)—— tooltip 考古用 */
+    sourceMtimeMs?: number;
+    /** 安装侧修改时间(2026-10-13,装配层 stat 注入;悬空 = undefined)—— tooltip 考古用 */
+    installMtimeMs?: number;
+};
 
 /** 树节点(给 VS Code 适配层用的最小结构) */
 export interface TreeNode {
@@ -112,6 +120,13 @@ export interface TreeNode {
     sourceRef?: string;
     /** 仅文件行:形态标记(悬空软链不给 ▶) */
     dangling?: boolean;
+    /** 仅文件行:残留(2026-10-14:lib 区行,最近一次构建的声明已不认;展示侧默认隐藏) */
+    leftover?: boolean;
+    /** 仅文件行:源失效(2026-10-13:C 类错误行,装配层 fs 检查注入) */
+    sourceMissing?: boolean;
+    /** 仅文件行:源/安装侧修改时间(2026-10-13,tooltip 考古;缺 = 该侧拿不到) */
+    sourceMtimeMs?: number;
+    installMtimeMs?: number;
     /** 仅文件行:可执行位(lib 区判定 ▶ 用;undefined = 未知,按可对待) */
     executable?: boolean;
     /** 有则说明可展开 */
@@ -126,11 +141,67 @@ export function relToWorkspace(workspaceRoot: string | undefined, p: string): st
     return p;
 }
 
+/**
+ * 软链形态(2026-10-14):文件自身是软链(`linkDomain`),或经上游目录软链扩大进来(`viaLinkDomain`)——
+ * 两种情况 install 路径与源路径都解析到**同一个文件**(statSync 跟随软链,同 inode),双侧 mtime 恒等。
+ */
+export function isSymlinkForm(r: Pick<DisplayRow, "linkDomain" | "viaLinkDomain">): boolean {
+    return r.linkDomain !== undefined || r.viaLinkDomain !== undefined;
+}
+
+/**
+ * src 链形态行的文案(2026-10-14 三档化,用户裁定"不是所有软链都能改了立即生效"):
+ * 软链只保证"安装副本与源是同一文件",改源何时生效取决于**消费方式**——
+ * 接口定义(.msg/.srv/.action)被消费的是 rosidl 生成代码,改源需重新构建再生成;
+ * 头文件消费在编译期,改源需重新编译;其余(py 源码/share 资源)运行时按原文照读,改了即用。
+ */
+export function srcLinkNote(r: Pick<DisplayRow, "area" | "name">): string {
+    const dot = r.name.lastIndexOf(".");
+    const ext = dot >= 0 ? r.name.slice(dot).toLowerCase() : "";
+    if (ext === ".msg" || ext === ".srv" || ext === ".action") {
+        return l10n.t("Form: symlink -> src (copy tracks source; interface changes need a rebuild to regenerate code)");
+    }
+    if (r.area === "include") {
+        return l10n.t("Form: symlink -> src (copy tracks source; changes take effect after recompilation)");
+    }
+    return l10n.t("Form: symlink -> src (edits take effect immediately, no reinstall)");
+}
+
+/**
+ * 行状态复核比较(纯函数,2026-10-14 用户裁定"点击行即复核"):显示三态(status/dangling/sourceMissing)
+ * vs 现探三态,任一不同 = 陈旧(点击发现不一致 → 触发整树权威重扫)。undefined 与 false 同义(无标记=无);
+ * mtime 差异不算状态不一致(纯信息,不值得为此重扫)。
+ */
+export function rowStateStale(
+    displayed: { status?: string; dangling?: boolean; sourceMissing?: boolean },
+    fresh: { status: string; dangling?: boolean; sourceMissing?: boolean }
+): boolean {
+    return displayed.status !== fresh.status
+        || (displayed.dangling === true) !== (fresh.dangling === true)
+        || (displayed.sourceMissing === true) !== (fresh.sourceMissing === true);
+}
+
 /** 一行的 hover 全文:把"为什么是这个状态"摊开(中性文案,不报错) */
 export function rowTooltip(r: DisplayRow): string {
     const lines: string[] = [`${r.name}   ·   ${r.status}`];
     lines.push(l10n.t("Install target: {0}", r.installPath));
     lines.push(l10n.t("Source:   {0}", r.source ?? l10n.t("(no source - this domain has no install record)")));
+    // 双修改时间考古(2026-10-13,用户裁定):执行结果与原文件不符时对表——只给原始时间,不下结论。
+    // 2026-10-14 收敛(用户裁定):软链形态行 install 与源是同一文件,双行恒等纯噪音 → 合并单行;
+    // 拷贝安装行(非链)才保留双行对表(源>安装 = 陈旧,唯一有信息量的场景)。
+    if (isSymlinkForm(r)) {
+        const m = r.sourceMtimeMs ?? r.installMtimeMs;
+        if (m !== undefined) {
+            lines.push(l10n.t("Mtime: {0}", new Date(m).toLocaleString()));
+        }
+    } else {
+        if (r.sourceMtimeMs !== undefined) {
+            lines.push(l10n.t("Source mtime: {0}", new Date(r.sourceMtimeMs).toLocaleString()));
+        }
+        if (r.installMtimeMs !== undefined) {
+            lines.push(l10n.t("Install mtime: {0}", new Date(r.installMtimeMs).toLocaleString()));
+        }
+    }
     if (r.status === "missing") {
         lines.push(l10n.t("⚠️ In install records but not seen under install/ (deleted or layout mismatch)"));
     }
@@ -138,11 +209,14 @@ export function rowTooltip(r: DisplayRow): string {
         lines.push(l10n.t("⚠️ Dangling symlink: target missing - do not treat as a usable entry point"));
     }
     if (r.linkDomain === "src") {
-        lines.push(l10n.t("Form: symlink -> src (edits take effect immediately, no reinstall)"));
+        lines.push(srcLinkNote(r)); // 三档化(2026-10-14):生效方式按消费而定,不再一律承诺"立即生效"
     } else if (r.linkDomain === "build") {
         lines.push(l10n.t("Form: symlink -> build (may break after rebuild)"));
     } else if (r.linkDomain === "outside") {
         lines.push(l10n.t("Form: symlink -> outside workspace (not usable for source mapping)"));
+    }
+    if (r.leftover === true) {
+        lines.push(l10n.t("Leftover: not in the latest build's records (entry removed/renamed) - stale file still in install/; a clean reinstall removes it"));
     }
     if (r.viaLinkDomain === "build") {
         lines.push(l10n.t("Shape: linked in via build (= develop passthrough; source dir contents bleed in)"));
@@ -169,9 +243,13 @@ export function fileNodeOf(r: DisplayRow, _workspaceRoot?: string, pkg?: string)
     const tooltip = clickInstallSide
         ? `${rowTooltip(r)}\n${l10n.t("Generated header (source in build) - click opens the INSTALL-side file; no src/build jump")}`
         : rowTooltip(r);
+    // 错误行徽标(2026-10-13,用户裁定):三型落点异常 = 单符号 ⚠(纯符号零文案,防多语言长度/观感问题)
+    // 残留行(2026-10-14):非异常时 description 显示"旧"(l10n 文案,用户裁定)
+    const faulty = r.status === "missing" || r.dangling === true || r.sourceMissing === true;
     return {
         kind: "file",
         label: r.name,
+        description: faulty ? "⚠" : r.leftover === true ? l10n.t("old") : undefined,
         tooltip,
         area: r.area,
         pkg,
@@ -180,6 +258,10 @@ export function fileNodeOf(r: DisplayRow, _workspaceRoot?: string, pkg?: string)
         installPath: r.installPath,
         status: r.status,
         dangling: r.dangling,
+        sourceMissing: r.sourceMissing,
+        leftover: r.leftover,
+        sourceMtimeMs: r.sourceMtimeMs,
+        installMtimeMs: r.installMtimeMs,
         executable: r.executable,
         sourceRef: r.sourceRef,
     };
@@ -285,12 +367,17 @@ export function fileContextValue(node: TreeNode): string | undefined {
 }
 
 /**
- * 行的**图标决策**(2026-10-04,用户裁定"有源路径才换"):
- *  · 文件行有 `sourcePath` → 交给**文件图标主题**按文件名/扩展名解析(适配层设
+ * 行的**图标决策**(2026-10-04,用户裁定"有源路径才换";2026-10-13 用户裁定升级「分型异形+红/琥珀」):
+ *  · **错误行强制语义图标,判定先于文件图标分支**(2026-10-13:dangling/sourceMissing 行因 sourcePath
+ *    存在曾漏标识,只留在 hover)——
+ *    B 悬空软链(dangling)→ `unlink` 红;C 源失效(sourceMissing,装配层 fs 检查注入)→ `warning` 琥珀
+ *    (形状换开,防"ThemeIcon.File 染色"与普通文件撞形);A 产物丢失(missing)→ 原 `warning` 升 `error` 红
+ *    (丢产物最强提醒)。红 = `list.errorForeground`,琥珀 = `editorWarning.foreground`,随主题适配;
+ *  · 正常文件行有 `sourcePath` → 仍交给**文件图标主题**按文件名/扩展名解析(适配层设
  *    `resourceUri` + `ThemeIcon.File`,与资源管理器同源,随用户主题自动跟随;
  *    官方机制:vscode.d.ts TreeItem.resourceUri —— file/folder ThemeIcon 仅在设有
  *    resourceUri 时让位给文件图标主题,其余恒按 codicon 渲染);
- *  · 其余维持语义 codicon:missing 行 `warning` 警示优先;无源路径的文件行退回
+ *  · 其余维持语义 codicon:无源路径的文件行退回
  *    角色图标(lib→terminal / launch→rocket / import→symbol-module / share→file-media /
  *    其余→file-code —— 源 `:attr` 展示串不进路径);非文件行 package/folder/info 不变
  *    (dir/area/package 是虚拟折树节点,本就没有磁盘路径字段);
@@ -298,11 +385,11 @@ export function fileContextValue(node: TreeNode): string | undefined {
  *    codicon folder 夹在中间反而扎眼 —— dir 行 `{tag:"none"}`,适配层不设 iconPath
  *    (渲染器对 iconPath/resourceUri/themeIcon 三连空不画图标,只剩折叠箭头+文字);
  *    区头行(area)是分区标题非文件夹,保留 folder 同质化图标。
- * 纯函数(零 vscode):适配层只做 `{tag:"file"}` → API 的机械翻译。
+ * 纯函数(零 vscode):适配层只做 `{tag:"file"}` / `{tag:"codicon",color}` → API 的机械翻译。
  */
 export type IconPlan =
     | { tag: "file"; path: string }
-    | { tag: "codicon"; id: string }
+    | { tag: "codicon"; id: string; color?: string }
     | { tag: "none" };
 
 export function iconPlanOf(node: TreeNode): IconPlan {
@@ -318,8 +405,25 @@ export function iconPlanOf(node: TreeNode): IconPlan {
     if (node.kind !== "file") {
         return { tag: "codicon", id: "info" };
     }
+    // 错误行分型图标(2026-10-13):判定先于 sourcePath→文件图标分支(B/C 行因 sourcePath 存在曾漏标识)
+    // 优先级(2026-10-14 用户定义):missing > warning > unlink —— missing=install/ 下落点消失(圆圈叉);
+    // warning=跳转的源文件丢失(跳转会失败);unlink=软链失效(不等于跳转失败:软链目标不一定是源文件,
+    // 如 cpp 可执行 install→build 链断仍能跳 src)。warning+unlink 同真 → warning(python file 链→src 删源案例)
     if (node.status === "missing") {
-        return { tag: "codicon", id: "warning" };
+        return { tag: "codicon", id: "error", color: "list.errorForeground" };
+    }
+    if (node.sourceMissing === true) {
+        return { tag: "codicon", id: "warning", color: "editorWarning.foreground" };
+    }
+    if (node.dangling === true) {
+        // 悬空图标(2026-10-14 换源):`unlink` 在 VS Code ≤1.133 的 codicon 注册表里不存在
+        // (用户 1.124.2/测试 1.133 双实测 he/de 注册 0 命中)→ 渲染为空 = "图标丢失";
+        // 换 `debug-disconnect`(断连插头,语义="失效",两版注册表均已验证在册)
+        return { tag: "codicon", id: "debug-disconnect", color: "list.errorForeground" };
+    }
+    // 残留(2026-10-14):最轻一档 → 灰 history(旧/过期语义),排 unlink 之后(faulty 徽标仍优先)
+    if (node.leftover === true) {
+        return { tag: "codicon", id: "history", color: "descriptionForeground" };
     }
     if (node.sourcePath !== undefined && node.sourcePath !== "") {
         return { tag: "file", path: node.sourcePath };
@@ -469,18 +573,21 @@ export function packageNodeOf(view: SidebarPackageView, workspaceRoot?: string):
     if (view.buildType !== undefined) {
         attrs.push(view.buildType);
     }
+    const tooltipLines = [
+        view.pkg,
+        l10n.t("Install prefix: {0}", view.prefix),
+        l10n.t("Layout: {0} (workspace-level, shown next to the view title)", view.layout),
+        l10n.t("Install type: {0} (based on actual install/ contents, not build config declaration)", view.installForm === "symlink" ? l10n.t("symlink install") : view.installForm === "copy" ? l10n.t("copy install") : l10n.t("unknown")),
+        l10n.t("Build type: {0} (inferred from build artifacts)", view.buildType ?? l10n.t("unknown")),
+        // 构建时间(2026-10-14,用户裁定):colcon_build.rc 的 mtime = 该包最近一次实际被构建的时刻
+        view.buildTimeMs !== undefined ? l10n.t("Build time: {0}", new Date(view.buildTimeMs).toLocaleString()) : undefined,
+        l10n.t("Entries: {0} visible / {1} total (generated artifacts/libs and excluded dirs filtered; per-area counts on each area)", visibleCount, view.rows.length),
+    ].filter((line): line is string => line !== undefined);
     return {
         kind: "package",
         label: view.pkg,
         description: `${[...attrs, l10n.t("{0} items", visibleCount)].join(" · ")}`,
-        tooltip: [
-            view.pkg,
-            l10n.t("Install prefix: {0}", view.prefix),
-            l10n.t("Layout: {0} (workspace-level, shown next to the view title)", view.layout),
-            l10n.t("Install type: {0} (based on actual install/ contents, not build config declaration)", view.installForm === "symlink" ? l10n.t("symlink install") : view.installForm === "copy" ? l10n.t("copy install") : l10n.t("unknown")),
-            l10n.t("Build type: {0} (inferred from build artifacts)", view.buildType ?? l10n.t("unknown")),
-            l10n.t("Entries: {0} visible / {1} total (generated artifacts/libs and excluded dirs filtered; per-area counts on each area)", visibleCount, view.rows.length),
-        ].join("\n"),
+        tooltip: tooltipLines.join("\n"),
         pkg: view.pkg,
         children: areas.length > 0 ? areas : [{ kind: "message", label: l10n.t("(nothing to show)"), description: l10n.t("everything filtered out was generated artifacts or libs") }],
     };
@@ -499,10 +606,19 @@ export function layoutOfViews(views: SidebarPackageView[]): string | undefined {
     return views.every((v) => v.layout === first) ? first : l10n.t("mixed layout");
 }
 
-/** 整棵树(纯函数) */
-export function buildTree(views: SidebarPackageView[], workspaceRoot?: string): TreeNode[] {
+/** 残留条目计数(2026-10-14):标题栏"残留 N 已隐藏"用 —— 全工作区 leftover 行总数 */
+export function countLeftovers(views: SidebarPackageView[]): number {
+    return views.reduce((sum, v) => sum + v.rows.filter((r) => r.leftover === true).length, 0);
+}
+
+/**
+ * 整棵树(纯函数)。`opts.showLeftovers`(2026-10-14,用户裁定方案 B):残留行**默认隐藏**
+ * (ROS2.ui.showLeftovers,眼睛按钮切换)—— 隐藏 = 整行从树里剔除,标题栏另行显示隐藏计数。
+ */
+export function buildTree(views: SidebarPackageView[], workspaceRoot?: string, opts?: { showLeftovers?: boolean }): TreeNode[] {
     if (views.length === 0) {
         return [{ kind: "message", label: l10n.t("No build artifacts found"), description: l10n.t("Run colcon build first") }];
     }
-    return views.map((v) => packageNodeOf(v, workspaceRoot));
+    const effective = opts?.showLeftovers === true ? views : views.map((v) => ({ ...v, rows: v.rows.filter((r) => r.leftover !== true) }));
+    return effective.map((v) => packageNodeOf(v, workspaceRoot));
 }

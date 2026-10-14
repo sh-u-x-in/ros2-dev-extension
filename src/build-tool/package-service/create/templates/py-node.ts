@@ -14,9 +14,21 @@
  * 扩展位(后续"Generated-package content upgrade"调整入口):
  *   - 节点模板正文唯一位于本文件;
  *   - 如需按用途(发布/订阅/服务)扩展节点形态,在本文件加导出函数。
+ *
+ * 教学注释 L10N(2026-10-12):docstring 与注释均以稳定 ID 查 l10n/templates 表
+ * (en 源 + 各语种),按 `lang` 出单语生成物,代码行逐字节不变。
+ *
+ * shebang 语义(2026-10-12,方案 B 用户裁定):`opts.directExec = true` ⇒ 保留
+ * `#!/usr/bin/env python3`(文件被**直接执行**的场景:cpp-dual scripts/ 与 mixed 模块,
+ * 二者经 install(PROGRAMS) 直装 lib/<pkg>/,Linux 内核靠 shebang 选解释器);
+ * `false` ⇒ 不写 shebang(文件经 **console_scripts 入口点**执行的场景:ament_python 模块,
+ * setuptools 生成的包装器自带 shebang,模块本身是被 import 的)。缺省 true(保守:
+ * 未来新调用方忘传时,直装路径仍可执行)。
  */
 
 import { getLogger } from "../../../../logger";
+import { resolvePyNodeStrings } from "../../../../../l10n/templates/index";
+import type { TemplateCommentLang } from "../../../../../l10n/templates/index";
 
 /** 扩展日志薄封装(带 tmpl-py-node 模块前缀) */
 const log = getLogger("tmpl-py-node");
@@ -25,31 +37,35 @@ const log = getLogger("tmpl-py-node");
  * Python 最小示范节点源(继承 rclpy Node,构造时注册节点并打印Node name一次)。
  * @param pkg 包名(仅出现在模块 docstring)
  * @param node 运行时Node name(合法标识符或脚本场景的映射名)
+ * @param lang 注释语种(缺省 en = 英语源)
+ * @param opts.directExec 文件是否被直接执行(PROGRAMS 直装)= true 写 shebang;
+ *        经 console_scripts 入口点执行 = false 不写(缺省 true)
  */
-export function pyNodeSource(pkg: string, node: string): string {
+export function pyNodeSource(pkg: string, node: string, lang: TemplateCommentLang = "en", opts: { directExec?: boolean } = {}): string {
     log.trace(`展开 Python 节点源:${pkg}/${node}`);
-    return `#!/usr/bin/env python3
-"""${pkg} minimal demo node: subclasses an rclpy Node, registers it and prints the node name (once)."""
+    const T = resolvePyNodeStrings(lang, { pkg });
+    const shebang = (opts.directExec ?? true) ? "#!/usr/bin/env python3\n" : "";
+    return `${shebang}"""${T.moduleDocstring}"""
 
 import rclpy
 from rclpy.node import Node
 
 
-# 继承 rclpy.node.Node, 构造函数里 super().__init__('Node name')
+${T.classInherit}
 class DemoNode(Node):
 
     def __init__(self):
         super().__init__('${node}')
-        # 打印Node name (只打印一次)
+${T.printOnce}
         self.get_logger().info(self.get_name())
 
 
 def main(args=None):
-    # rclpy.init() 返回 None, 不能当 with 上下文管理器用;
-    # 标准流程 = 初始化 → 建节点 → 用毕显式释放 → 关闭 rclpy
+${T.initNote}
+${T.flowNote}
     rclpy.init(args=args)
-    node = DemoNode()   # 构造时即注册节点并打印
-    node.destroy_node()  # 释放节点 (示范代码不 spin, 用完即退)
+    node = DemoNode()   ${T.registerNote}
+    node.destroy_node()  ${T.destroyNote}
     rclpy.shutdown()
 
 

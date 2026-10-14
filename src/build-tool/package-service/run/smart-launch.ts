@@ -21,6 +21,7 @@ import { ros2LaunchMemoryId } from "../share/defaults/ros2-launch";
 import { pickPresets } from "../share/pick-preset";
 import { readSelectionMemory, writeSelectionMemory } from "../share/selection-memory";
 import type { LaunchTarget, RunDataSource } from "./run-data-source";
+import { notifyStaleIfNeeded } from "./run-data-source";
 import { expandRos2Launch, readRosLaunchSpec } from "./share-spec";
 
 /** smart-launch 模块日志 */
@@ -55,12 +56,16 @@ async function executeLaunchSelection(workspaceRoot: string, target: LaunchTarge
         vscode.window.showErrorMessage(vscode.l10n.t("Launch command expanded to empty; cancelled. Check the template in setting ROS2.launch.shareSpec."));
         return;
     }
-    await composeApi.rosTaskRunner.launch({
+    // 启动照常先行;陈旧附加警告(2026-10-13,与 run 路径同构):源 launch 文件比 share 区副本新时,
+    // 非模态警告气泡(2026-10-14 由状态栏改来)——不等待、30 秒冷却、「不再显示」按钮可永久关闭
+    const launching = composeApi.rosTaskRunner.launch({
         argv: expanded.argv,
         pkg: target.pkg,
         launch_file: target.name,
         cwd: workspaceRoot,
     });
+    notifyStaleIfNeeded("launch", target.pkg, target.name, target.sourcePath, target.installPath);
+    await launching;
     log.debug(vscode.l10n.t("Launch executed: {0}/{1}, presets [{2}]", target.pkg, target.name, pick.picked.join(",")));
 }
 

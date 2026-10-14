@@ -49,6 +49,9 @@ import {
 } from "./intellisense-utils";
 import {
     cppIncludeEntryExists,
+    ENTRY_OVERRIDES_CLANGD_SETTING,
+    ENTRY_OVERRIDES_CPPTOOLS_SETTING,
+    ENTRY_OVERRIDES_PYTHON_SETTING,
     clangdIncludeExists,
     pythonPathExists,
     removeClangdIncludes,
@@ -86,8 +89,9 @@ interface ActiveSides {
 const INTELLISENSE_ENGINES: IntellisenseEngine[] = ["auto", "cpptools", "clangd", "both", "none"];
 
 function getIntellisenseEngine(): IntellisenseEngine {
-    const v = getExtensionConfiguration().get<IntellisenseEngine>("ide.intellisenseEngine", "both");
-    return INTELLISENSE_ENGINES.includes(v) ? v : "both";
+    // 缺省与非法值兜底均 = 清单声明默认(2026-10-12 用户裁定 both → auto;改默认时两处与 package.json 同步)
+    const v = getExtensionConfiguration().get<IntellisenseEngine>("ide.intellisenseEngine", "auto");
+    return INTELLISENSE_ENGINES.includes(v) ? v : "auto";
 }
 
 /** 解析引擎开关 → 启用的维护侧(auto:只装一个用那个;都装/都没装 → 双侧) */
@@ -201,17 +205,27 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
         // 发行版切换后旧形状条目由渲染层"旧形状残留直接删除"机制自动清替,无需额外逻辑
         const distroCfg = resolveDistroConfig(opts.environment.getEnv());
         log.debug(`发行版模板:distro=${distroCfg.distro ?? "(无 env)"} pythonAbi=${distroCfg.tpl.pythonAbi} purelib=${distroCfg.tpl.cmakePythonPurelib} 来源=${distroCfg.abiSource}`);
+        // 生成条目替换表(2026-10-14,三键分辖三文件,撞 key 结构性不可能):每轮各读一次
+        // (非对象值容错为空表),分路由透传三个 sync;【表盲红线】仅易增侧消费——
+        // applyRemovals/预检不传任何表,保持字面量匹配
+        const readOverrides = (key: string): Record<string, string> => {
+            const raw = getExtensionConfiguration().get<unknown>(key, {});
+            return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, string> : {};
+        };
+        const cppOv = readOverrides(ENTRY_OVERRIDES_CPPTOOLS_SETTING);
+        const clangdOv = readOverrides(ENTRY_OVERRIDES_CLANGD_SETTING);
+        const pythonOv = readOverrides(ENTRY_OVERRIDES_PYTHON_SETTING);
         const inc = collectAllIncludes(entries, layout);
-        log.debug(`易增执行:布局=${layout};包 ${entries.length} 个 → include 工作空间 ${inc.ws.length}/安装 ${inc.install.length}/环境 ${inc.sys.length}(平铺 ${inc.all.length});引擎 cpptools=${sides.cpptools}/clangd=${sides.clangd}`);
+        log.debug(`易增执行:布局=${layout};包 ${entries.length} 个 → include 工作空间 ${inc.ws.length}/安装 ${inc.install.length}/环境 ${inc.sys.length}(平铺 ${inc.all.length});引擎 cpptools=${sides.cpptools}/clangd=${sides.clangd};替换表条数 cpp=${Object.keys(cppOv).length}/clangd=${Object.keys(clangdOv).length}/python=${Object.keys(pythonOv).length}`);
         if (sides.cpptools) {
-            await syncCppProperties(opts.workspaceRoot, inc.all); // 存在→合并缺失条目,缺失→生成
+            await syncCppProperties(opts.workspaceRoot, inc.all, cppOv); // 存在→合并缺失条目,缺失→生成
         }
         if (sides.clangd) {
             // 布局一并传入(安装组注释与归正都按它);install 传**父层前缀**供 clangdGroupDirs 展开子根
-            await syncClangd(opts.workspaceRoot, { ws: inc.ws, install: inc.installPrefixes, sys: inc.sys }, layout); // 存在→按组分补缺失,缺失→生成
+            await syncClangd(opts.workspaceRoot, { ws: inc.ws, install: inc.installPrefixes, sys: inc.sys }, layout, clangdOv); // 存在→按组分补缺失,缺失→生成
         }
         const envDirs = collectPythonDirs(opts.environment.getEnv(), opts.workspaceRoot);
-        await syncPythonPaths(opts.workspaceRoot, entries, envDirs, layout, distroCfg.tpl);
+        await syncPythonPaths(opts.workspaceRoot, entries, envDirs, layout, distroCfg.tpl, pythonOv);
     }
 
     /**
@@ -359,3 +373,6 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
 // 修改时间:2026-09-08 23:53(确认计数/措辞以"包"为单位(同包多侧 = 1 个包);删除确认超时 10s → 60s)
 // 修改时间:2026-09-28(VD-2 接线:applyAdditions 每轮经 distro-templates.resolveDistroConfig 解析发行版模板
 // (env.ROS_DISTRO 查表 + PYTHONPATH 观测 ABI,观测优先表兜底)并透传给 syncPythonPaths;零新增事件/配置键)
+// 修改时间:2026-10-14(接入生成条目替换表三键 ide.entryOverrides.clangd/cpptools/python(同日由合并键拆分,
+// 每 sync 只收本文件专属表,撞 key 结构性不可能):applyAdditions 每轮各读一次(非对象值容错空表)分路由透传;
+// 【表盲红线】applyRemovals 有感删除与预检不感知任何一张表)

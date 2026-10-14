@@ -13,14 +13,15 @@ A Visual Studio Code extension supporting [Robot Operating System 2 (ROS 2)](htt
 
 * **Automatic ROS environment setup** — Detects the distribution and loads the environment when a ROS 2 workspace opens; supports `pixi` environments and custom setup scripts, and re-collects automatically when shell configuration files change.
 * **ROS 2 status page** — Start the extension's resident helper (an rclpy process talking to DDS directly) with one click to inspect nodes / topics / services / parameters / lifecycle; subscribe to topics, call services, send action goals (structured forms), and open oversized parameters as full content.
-* **Package contents sidebar** — Shows each package's executables, launch files, Python exports, resources and headers based on the actual install directory; inline run / build buttons and click-to-source navigation.
+* **Package contents sidebar** — Shows each package's executables, launch files, Python exports, resources and headers based on the actual install directory; inline run / build buttons and click-to-source navigation. Rows carry health markers (missing artifact / broken symlink / missing source) and source-vs-install modification times, package hovers show the last build time, entries the latest build no longer declares are hidden as "leftovers" behind a title-bar eye toggle, and clicking a row re-verifies it against disk.
 * **Build integration** — `Ctrl+Shift+B` smart build (multi-select packages + argument presets); the build command is fully customizable via a settings template; pre-build checks catch install-method (symlink/copy) and layout (merged/isolated) conflicts with fix suggestions.
 * **Run & launch** — `ros2 run` / `ros2 launch` with argument presets and per-target memory; targets never cross-contaminate.
+* **One-key run (`Ctrl+F10`)** — Runs the active Python/C++ source file or launch file; detects compiled-but-not-installed targets, and — unless silenced via `ROS2.run.staleWarning` — shows a non-modal warning when the installed copy is older than its source.
 * **Testing** — Integrated with the VS Code Test Explorer: discovers C++ gtest and Python pytest tests automatically, with run/debug and result parsing.
 * **Language services** — Completion, hover, definition, formatting and diagnostics for `.msg`/`.srv`/`.action`; include-graph-driven navigation, hover, completion and D1-D14 diagnostics for `.xacro`/`.urdf`; launch files (py/XML/YAML) completion and include navigation.
 * **Code snippets** — Curated Python (rclpy) and C++ (rclcpp) snippets covering nodes, publishers/subscribers, services, actions, parameters, logging and launch files.
-* **IntelliSense configuration** — Automatically maintains include paths for cpptools and clangd (selectable engine) and merges `compile_commands.json`.
-* **Package creation wizard** — Generates C++ / Python / mixed packages: built-in dependency picker, naming and reserved-name validation, launch/resource templates.
+* **IntelliSense configuration** — Automatically maintains include paths for cpptools and clangd (engine auto-detected or selectable) and merges `compile_commands.json`; per-engine entry override tables can replace or drop individual managed entries, and an optional tidy mode keeps the managed `.clangd` block sorted.
+* **Package creation wizard** — Generates C++ / Python / mixed packages: dependency picker with builtin packages pre-checked and user-overridable descriptions (`ROS2.packages.userIndex`), naming and reserved-name validation, launch/resource templates; the generated CMakeLists.txt pins the C++ standard for the detected ROS 2 distribution, and generated teaching comments follow the UI language.
 * **ROS 2 terminal** — Creates terminals with the ROS environment pre-loaded (bash/zsh/fish/pwsh/cmd all supported); right-click a folder to build or scaffold quickly.
 * **rosdep / Doctor** — Shortcuts for `rosdep` dependency installation and `ros2 doctor` diagnostics.
 * **Bilingual UI** — English and Simplified Chinese interfaces, following the VS Code display language.
@@ -42,6 +43,8 @@ Key settings (see [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-
 * `ROS2.env.*` — distribution / setup script / pixi environment;
 * `ROS2.build.shareSpec` / `ROS2.run.shareSpec` / `ROS2.launch.shareSpec` — the template & preset mechanism for the three commands;
 * `ROS2.build.installMethod` / `ROS2.build.installLayout` — install method (auto / symlink / copy) and layout;
+* `ROS2.ide.*` — IntelliSense engine selection, per-engine managed-entry override tables, managed `.clangd` sorting;
+* `ROS2.packages.userIndex` — user-supplied descriptions for dependency candidates;
 * `ROS2.search.*` — workspace scan exclusions, symlink following and timeouts.
 
 ## Documentation
