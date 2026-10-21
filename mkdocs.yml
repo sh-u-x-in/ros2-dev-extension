@@ -1,4 +1,4 @@
-site_name: RDE for ROS 2
+site_name: ROS 2 Workbench
 nav:
   - English:
       - Home: en/index.md

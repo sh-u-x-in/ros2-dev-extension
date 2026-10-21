@@ -1,6 +1,6 @@
-# Get started with the Robot Developer Extensions for ROS 2
+# Get started with ROS 2 Workbench
 
-Welcome to the Robot Developer Extensions for ROS 2! This extension supports ROS 2 development on Windows, Linux and macOS.
+Welcome to ROS 2 Workbench! This extension supports ROS 2 development on Windows, Linux and macOS.
 
 ## Features
 

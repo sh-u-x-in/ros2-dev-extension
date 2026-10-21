@@ -1,6 +1,6 @@
 # IntelliSense Support
 
-The Robot Developer Extensions for ROS 2 provides rich IntelliSense support for ROS message files (`.msg`, `.srv`, `.action`), making it easier to work with ROS interfaces.
+ROS 2 Workbench provides rich IntelliSense support for ROS message files (`.msg`, `.srv`, `.action`), making it easier to work with ROS interfaces.
 
 ## Message File IntelliSense
 

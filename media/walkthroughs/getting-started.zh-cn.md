@@ -1,6 +1,6 @@
-# ROS 2 机器人开发扩展入门
+# ROS 2 工作台入门
 
-欢迎使用 ROS 2 机器人开发扩展！本扩展为 Windows、Linux 和 macOS 上的 ROS 2 开发提供支持。
+欢迎使用 ROS 2 工作台！本扩展为 Windows、Linux 和 macOS 上的 ROS 2 开发提供支持。
 
 ## 功能特性
 

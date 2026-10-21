@@ -4,25 +4,25 @@
 Open Robotics has standardized on Pixi for Windows development.
 
 ## RoboStack & Open Robotics
-Open Robotics has partnered with RoboStack to provide a Pixi-based ROS 2 development environment. This environment is designed to work seamlessly with the Robot Developer Extensions for ROS 2, providing a consistent and easy-to-use development experience across platforms.
+Open Robotics has partnered with RoboStack to provide a Pixi-based ROS 2 development environment. This environment is designed to work seamlessly with ROS 2 Workbench, providing a consistent and easy-to-use development experience across platforms.
 
 Open Robotics provides an official distribution of core ROS Components through Open Robotics build system. This distribution is recommended for production use cases.
 
 RoboStack provides a community-driven distribution of ROS 2 packages, which includes additional packages not available in the Open Robotics distribution. This distribution is recommended for development and testing purposes.
 
-## Getting Started with Pixi, ROS 2, and the Robot Developer Extensions
+## Getting Started with Pixi, ROS 2, and ROS 2 Workbench
 1. **Install Pixi**: Follow the instructions on the [Pixi website](https://pixi.sh/latest/) to install Pixi on your system.
 2. **Install Visual Studio**: Download and install [Visual Studio](https://visualstudio.com/). This is needed for building ROS 2 packages on Windows.
 3. **Install Visual Studio Code**: Download and install [Visual Studio Code](https://code.visualstudio.com/).
 4. **Install ROS 2 through RoboStack or Open Robotics** depending on your use case:
    - For Development and Testing, follow the instructions on the [RoboStack website](https://robostack.github.io/).
    - For Production Environments, follow the instructions on the [ros.org](https://docs.ros.org/en/kilted/Installation/Windows-Install-Binary.html).
-5. **Install the Robot Developer Extensions (RDE) for ROS 2**: Install the extension from the [Visual Studio Code Marketplace](https://marketplace.visualstudio.com/) or [Open-Vsx.org](https://open-vsx.org/).
-6. **Configure Pixi in RDE**
+5. **Install ROS 2 Workbench**: Install the extension from the [Visual Studio Code Marketplace](https://marketplace.visualstudio.com/) or [Open-Vsx.org](https://open-vsx.org/).
+6. **Configure Pixi in ROS 2 Workbench**
     - Open the Workspace settings.
     - Set the `ROS2.env.pixiRoot` setting to specify the root directory where Pixi environments are installed. On Windows, leaving it empty falls back to `c:\pixi_ws`; on Mac/Linux no default is inferred (must be configured explicitly if Pixi is used).
     - The extension will automatically detect and use the appropriate setup script based on your platform and Pixi configuration.
-7. **Open a ROS 2 Workspace**: Open a folder containing a ROS 2 workspace. The Robot Developer Extensions will automatically detect the ROS 2 environment and configure the workspace accordingly.
+7. **Open a ROS 2 Workspace**: Open a folder containing a ROS 2 workspace. ROS 2 Workbench will automatically detect the ROS 2 environment and configure the workspace accordingly.
 
 ## Pixi Environment Detection
 The extension automatically detects Pixi environments by:
@@ -41,10 +41,10 @@ When Pixi is enabled, the extension will:
 - **macOS**: Uses `local_setup.bash` from the Pixi ROS 2 environment
 
 ## Troubleshooting
-If you encounter issues with Pixi or the Robot Developer Extensions, consider the following:
+If you encounter issues with Pixi or ROS 2 Workbench, consider the following:
 
 - Ensure that Pixi is installed correctly and the `pixi` command is available in your terminal.
-- Check the [Visual Studio Code output panel](./troubleshooting.md) for any error messages related to the Robot Developer Extensions.
+- Check the [Visual Studio Code output panel](./troubleshooting.md) for any error messages related to ROS 2 Workbench.
 - If you are using RoboStack, ensure that the ROS 2 packages are installed correctly and the environment is set up properly outside of the extension.
 - Verify that the `ROS2.env.pixiRoot` setting points to the correct Pixi installation directory.
 - For issues related to Pixi, refer to the [Pixi documentation](https://pixi.sh/latest/docs/) or the [Pixi Discord server](https://discord.gg/kKV8ZxyzY4) for community support.

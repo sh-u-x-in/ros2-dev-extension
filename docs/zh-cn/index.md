@@ -1,4 +1,4 @@
-# ROS 2 机器人开发扩展 (RDE for ROS 2)
+# ROS 2 工作台
 
 [English](../en/index.md) | 简体中文
 

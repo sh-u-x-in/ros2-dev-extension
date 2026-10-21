@@ -1,4 +1,4 @@
-# ROS 2 Robot Development Extension (RDE for ROS 2)
+# ROS 2 Workbench
 
 English | [简体中文](../zh-cn/index.md)
 
