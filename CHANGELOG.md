@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file. Format foll
 
 ## [Unreleased]
 
+### Added
+
+- **Dedicated switch for the Python extraPaths maintenance** (`ROS2.ide.maintainPythonPaths`, default on): turns the automatic maintenance of the two Python `extraPaths` keys in settings.json on or off independently of the engine switch — the engine switch governs only the C++ header-search sides (cpptools / clangd). Off = fully manual; regenerating the IntelliSense configuration skips the side and the per-file feedback reports it as disabled;
+
+### Changed
+
+- **Resident helper platform gate**: clicking **Start Helper** on any platform other than Linux/macOS (all Windows editions/architectures — `win32` covers every Windows; WSL reports as Linux and is unaffected) is refused instantly with "The resident helper is not supported on this platform yet (Linux/macOS only); it may be supported in a future release." instead of a vague triple-failure error. The allowlist form also gives exotic platforms (freebsd/aix/…) the same honest refusal, and any future platform value defaults to refused rather than silently attempting;
+- **Helper preflight now reports the interpreter identity**: the structured preflight line (stderr and the helper log) carries `python=<executable> (<version>)`, and a success line lands in the helper log on every start — environments where a conda/pyenv interpreter shadows the system one are immediately diagnosable from the "rclpy missing" report;
+- `gc.freeze()` is now guarded with `hasattr`, so Python 3.6 interpreters degrade gracefully (losing only GC-pause smoothing) instead of crashing with a bare AttributeError — the helper's code floor is now effectively "whatever rclpy itself requires";
+- The VM helper suite now runs a `py_compile` gate over every helper `.py` with the current interpreter before starting the 42 scenarios — syntax that exceeds the supported floor turns red before any scenario runs;
+- **Command palette slimmed from 18 to 14 visible entries**: the separate "Run ROS Launch File" command is gone from the palette — **One-key Run (ros2 run / ros2 launch)** already routes by the active file type (Ctrl+F10 unchanged); the show/hide leftover entries pair is hidden (the title-bar eye button remains the single control), and the row-context "Open Installed File" joins the context-only hidden set. Hidden commands keep working via their ids (keybindings unaffected).
+
 ## [0.0.4] - 2026-10-21
 
 ### Added
@@ -13,7 +25,6 @@ All notable changes to this project will be documented in this file. Format foll
 - **Package sidebar: develop/egg-link Python exports** — symlink-installed (`develop` mode) ament_python packages previously lost their entire Python exports area: the scanner only walked `site-packages/<pkg>/`, which develop installs never populate. The develop mirror (`build/<pkg>`, injected via the egg-link) is now walked with via-link row semantics, and the `<pkg>.egg-link` bookkeeping file is listed as a generated row (its loss is silent by design — the interpreter never reads it);
 - **Package sidebar: "Open Installed File"** — a row context-menu entry opens the install-side file directly (symlink rows open the link, entity rows the entity), complementing the left-click jump to source;
 - **clangd Add-block managed sort** (`ROS2.ide.clangdTidy`, default off): when enabled, a block-style `Add:` section is rebuilt in canonical group order with group comments re-pinned in the UI language and user-added lines moved verbatim to the tail; the rebuild now also **injects managed flags that were never present** (previously it only re-sorted existing lines, so a missing entry such as `-std=c++20` stayed lost forever);
-- **Dedicated switch for the Python extraPaths maintenance** (`ROS2.ide.maintainPythonPaths`, default on): turns the automatic maintenance of the two Python `extraPaths` keys in settings.json on or off independently of the engine switch — the engine switch governs only the C++ header-search sides (cpptools / clangd). Off = fully manual; regenerating the IntelliSense configuration skips the side and the per-file feedback reports it as disabled;
 
 ### Fixed
 

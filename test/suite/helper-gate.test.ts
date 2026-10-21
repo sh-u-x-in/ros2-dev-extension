@@ -65,7 +65,13 @@ describe("常驻助手围栏(P4)", () => {
         assert.strictEqual(panel.sent.length, 1, "仅一条拒绝消息(无 starting 播报/无 15s 等待)");
         assert.strictEqual(panel.sent[0].helperAction, "error");
         assert.strictEqual(panel.sent[0].isRunning, false);
-        assert.ok(String(panel.sent[0].message).includes("cannot start the helper"), "拒绝文案=助手门键");
+        // D 平台白名单门(2026-10-18 用户裁定):win32 开发机=平台中性文案;
+        // linux 宿主(WSL/CI)走环境门文案
+        if (process.platform === "win32") {
+            assert.ok(String(panel.sent[0].message).includes("not supported on this platform"), "平台门文案(win32)");
+        } else {
+            assert.ok(String(panel.sent[0].message).includes("cannot start the helper"), "拒绝文案=助手门键(posix)");
+        }
     });
 
     it("spawn 环境闸:门关不 spawn,熔断回调上抛原因", async function () {

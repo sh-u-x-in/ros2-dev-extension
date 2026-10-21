@@ -6,7 +6,7 @@
     "views.installTruth.name": "Package Contents",
     "views.installTruth.contextualTitle": "ROS 2 Package Contents (install-truth)",
     "command.ROS2.createTerminal.title": "Create Terminal",
-    "command.ROS2.run.title": "Run ROS Executable (ros2 run)",
+    "command.ROS2.run.title": "One-key Run (ros2 run / ros2 launch)",
     "command.ROS2.launch.title": "Run ROS Launch File (ros2 launch)",
     "command.ROS2.showDaemonStatus.title": "Open ROS 2 Status Page (services / topics / parameters)",
     "command.ROS2.regenerateIntellisenseConfig.title": "Regenerate IntelliSense Configuration (incremental)",

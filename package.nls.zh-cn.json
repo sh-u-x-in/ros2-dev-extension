@@ -6,7 +6,7 @@
     "views.installTruth.name": "包内容",
     "views.installTruth.contextualTitle": "ROS 2 包内容(install-truth)",
     "command.ROS2.createTerminal.title": "创建终端",
-    "command.ROS2.run.title": "运行 ROS 可执行文件 (ros2 run)",
+    "command.ROS2.run.title": "一键运行 (ros2 run / ros2 launch)",
     "command.ROS2.launch.title": "运行 ROS 启动文件 (ros2 launch)",
     "command.ROS2.showDaemonStatus.title": "打开 ROS 2 状态页(服务/话题/参数监控)",
     "command.ROS2.regenerateIntellisenseConfig.title": "重新生成智能感知配置(补写)",

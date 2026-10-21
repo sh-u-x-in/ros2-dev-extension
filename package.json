@@ -430,6 +430,18 @@
                     "when": "false"
                 },
                 {
+                    "command": "ROS2.sidebar.openInstallSide",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.sidebar.showLeftovers",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.sidebar.hideLeftovers",
+                    "when": "false"
+                },
+                {
                     "command": "ROS2.colcon.toggleIgnore",
                     "when": "false"
                 },
@@ -439,6 +451,10 @@
                 },
                 {
                     "command": "ROS2.colcon.buildPackageDebug",
+                    "when": "false"
+                },
+                {
+                    "command": "ROS2.launch",
                     "when": "false"
                 }
             ]

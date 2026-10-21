@@ -35,9 +35,11 @@ def main(ext_version: str = "0"):
     rclpy.init()
     # GC 调优(2026-09-27 沿袭):差分/事件每周期产出数万临时对象,默认 gen0 阈值 700
     # 反复触发全代回收造成停顿;调大阈值 + 冻结启动期对象进永久代
+    # (B,2026-10-18:gc.freeze 为 3.7+ 属性——旧解释器静默跳过,仅损失停顿平滑,不再裸 AttributeError)
     gc.set_threshold(50000, 50, 50)
     gc.collect()
-    gc.freeze()
+    if hasattr(gc, "freeze"):
+        gc.freeze()
     node = Node(HELPER_NODE_NAME)
     executor = SingleThreadedExecutor()
     executor.add_node(node)

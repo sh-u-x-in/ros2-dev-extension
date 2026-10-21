@@ -100,6 +100,19 @@ export async function waitForHelperState(
 export async function startHelperFlow(panel: vscode.WebviewPanel) {
     const t0 = Date.now();
     log.info(vscode.l10n.t("startHelper request received; starting the resident helper"));
+    // P4 平台白名单门(2026-10-18 用户裁定):linux/darwin 放行,其余(一切 Windows——
+    // process.platform 对任何 Windows 版本/分支/架构均返回 win32——及 freebsd/aix/未来
+    // 新平台值)一律拒绝;WSL 判 linux 不误伤。文案平台中性+「未来可能支持」口径。
+    // 助手 POSIX 绑定(/tmp socket/fcntl/AF_UNIX),任何 Windows 原生环境物理不可用。
+    if (process.platform !== "linux" && process.platform !== "darwin") {
+        log.warn(vscode.l10n.t("Helper start refused: platform {0} is not supported yet", process.platform));
+        panel.webview.postMessage({
+            helperAction: 'error',
+            message: vscode.l10n.t("The resident helper is not supported on this platform yet (Linux/macOS only); it may be supported in a future release."),
+            isRunning: false,
+        });
+        return;
+    }
     // P4 环境门(入口):门关一句拒绝(带原因),不进入 starting 播报与 15s 在线等待——
     // 此前的路径是无环境时"点了没反应+15s 空转+后台重试风暴"的源头
     const envIssue = composeApi.environment.getEnvIssue();

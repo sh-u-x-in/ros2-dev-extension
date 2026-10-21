@@ -439,7 +439,12 @@ describe("助手 hello 契约网", () => {
             assert.strictEqual(result.reason, "late-deny");
         });
 
-        it("startHelperFlow 全链路:deny 后快速终结,页面只收 starting(原因走回调直达,不发误导超时文案)", async () => {
+        it("startHelperFlow 全链路:deny 后快速终结,页面只收 starting(原因走回调直达,不发误导超时文案)", async function () {
+            // A/B/D/F 平台白名单门(2026-10-18):win32 开发机在环境门之前就被平台文案拒绝,
+            // 走不到 deny 链——本例验证 deny 快速终结语义,仅 posix 宿主可跑
+            if (process.platform === "win32") {
+                this.skip();
+            }
             state.setEnv({ ROS_VERSION: "2", ROS_DISTRO: "humble" }); // 入口环境门开
             const sent: Array<{ helperAction?: string; message?: string }> = [];
             const panel = { webview: { postMessage: async (m: never) => { sent.push(m); return true; } } };

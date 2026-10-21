@@ -87,6 +87,8 @@
     "ROS 2 environment unavailable": "ROS 2 环境不可用",
     "No usable ROS 2 environment detected; cannot start the helper. Reason: {0}": "未检测到可用的 ROS 2 环境,无法启动常驻助手。原因:{0}",
     "Helper start refused at entry: {0}": "助手启动在入口被拒:{0}",
+    "Helper start refused: platform {0} is not supported yet": "助手启动被拒:平台 {0} 暂不支持",
+    "The resident helper is not supported on this platform yet (Linux/macOS only); it may be supported in a future release.": "常驻助手暂不支持当前平台(目前仅 Linux/macOS);未来版本可能会支持。",
     "Helper start abandoned after {0} failed spawn attempts; fix the environment and click Start again.": "助手连续 {0} 次启动失败,已停止自动重试;请修复环境后再次点击 Start。",
     "Helper connection rejected: {0}": "助手连接被拒绝:{0}",
     "Helper failure breaker tripped: {0}": "助手失败熔断已触发:{0}",

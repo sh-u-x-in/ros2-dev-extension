@@ -11,8 +11,8 @@
 ```bash
 cd /home/ros2/rde-ros-2   # hgfs 同份存储,本地构建/改动即时生效
 source /opt/ros/humble/setup.bash
-python3 test/vm/helper/_vm_server_test.py --all        # 42 场景主套件
-python3 test/vm/helper/_vm_server_test.py --only D8    # 单跑场景
+python3 test/vm/helper/_vm_server_test.py --all        # 42 场景主套件(前置 py_compile 硬门:助手全部 .py 先经当前解释器编译,语法超纲即退)
+python3 test/vm/helper/_vm_server_test.py --only D8    # 单跑场景(同样过编译门)
 python3 test/vm/helper/_preflight_shadow_test.py       # 预检遮蔽矩阵(F1-F6)
 python3 test/vm/helper/_exit_probe.py                  # 退出码探针(SIGTERM/SIGKILL)
 python3 test/vm/helper/_x2_probe.py 3                  # CLI 链路诊断探针(N 循环,带全量遥测)

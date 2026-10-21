@@ -64,7 +64,10 @@ def _preflight() -> None:
         disk_log = None  # 诊断通道降级:后续只走 stderr
 
     if mask:
-        line = f"preflight mask=0x{mask:02x} (" + "; ".join(detail) + ")"
+        # 报告行携带解释器身份(A,2026-10-18):conda/pyenv 前置雷一眼见底——
+        # "rclpy 缺失"的真因往往是 PATH 上排在系统解释器前面的其它 python
+        line = (f"preflight mask=0x{mask:02x} (" + "; ".join(detail) + ")"
+                f" python={sys.executable} ({sys.version.split()[0]})")
         try:
             if disk_log is not None:
                 disk_log(f"[预检失败] {line}")
@@ -73,6 +76,9 @@ def _preflight() -> None:
         sys.stderr.write(f"[rde-helper:error] {line}\n")
         sys.stderr.flush()
         sys.exit(PREFLIGHT_BASE + mask)
+
+    # 成功也留解释器身份(A):每次助手启动都在 /tmp/rde_param_helper.log 可查当时用的哪个 python
+    disk_log(f"preflight ok: python={sys.executable} ({sys.version.split()[0]})")
 
 
 _preflight()

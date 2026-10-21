@@ -1656,6 +1656,24 @@ SCENARIOS = [
 ]
 
 
+def compile_gate():
+    """F(2026-10-18):套件前置 py_compile 硬门——用**当前解释器**编译助手全部 .py,
+    防新高版本语法混入(任意一个文件语法超纲,42 场景在起助手之前就红,而非散点假象)。"""
+    import py_compile
+
+    lib_dir = os.path.join(REPO, "assets", "ros", "param_helper_lib")
+    targets = [HELPER] + sorted(
+        os.path.join(lib_dir, f) for f in os.listdir(lib_dir) if f.endswith(".py")
+    )
+    for path in targets:
+        try:
+            py_compile.compile(path, doraise=True)
+        except py_compile.PyCompileError as e:
+            print(f"!! 编译门失败:{path}\n{e}", flush=True)
+            sys.exit(1)
+    print(f"编译门通过:助手 {len(targets)} 个 .py(py_compile @ {sys.executable.split('/')[-1]})", flush=True)
+
+
 def main():
     argv = sys.argv[1:]
     if "--list" in argv:
@@ -1668,6 +1686,7 @@ def main():
         only = {x.strip().upper() for x in argv[argv.index("--only") + 1].split(",")}
     run_all = "--all" in argv or only is None
 
+    compile_gate()  # F:py_compile 硬门(失败即退,42 场景不起)
     clean_slate()
     CTX["helper"] = spawn_helper()
     time.sleep(1.0)

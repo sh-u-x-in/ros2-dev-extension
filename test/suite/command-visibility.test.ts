@@ -15,14 +15,18 @@ import * as assert from "assert";
 import * as fs from "fs";
 import * as path from "path";
 
-/** 上下文专属命令(需树项/右键实参,面板直呼必报警告或错误 → 面板隐藏) */
+/** 上下文专属命令(需树项/右键实参,面板直呼必报警告或错误 → 面板隐藏)+ 已合并/被标题按钮取代的重复入口 */
 const CONTEXT_ONLY = [
     "ROS2.sidebar.runExecutable",
     "ROS2.sidebar.launchFile",
     "ROS2.sidebar.buildPackage",
+    "ROS2.sidebar.openInstallSide",
+    "ROS2.sidebar.showLeftovers",
+    "ROS2.sidebar.hideLeftovers",
     "ROS2.colcon.toggleIgnore",
     "ROS2.colcon.buildPackageRelease",
     "ROS2.colcon.buildPackageDebug",
+    "ROS2.launch",
 ] as const;
 
 function loadManifest(): {
@@ -47,7 +51,7 @@ describe("命令面板可见性(manifest 防回归锁)", () => {
         }
     }
 
-    it("六个上下文专属命令在 menus.commandPalette 且 when=false(面板隐藏,菜单/树内可用)", () => {
+    it("上下文专属与已合并命令在 menus.commandPalette 且 when=false(面板隐藏,菜单/树内/键位可用)", () => {
         for (const name of CONTEXT_ONLY) {
             assert.strictEqual(hiddenBy.get(name), "false", `${name} 应以 when:"false" 隐藏出面板`);
         }
