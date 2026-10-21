@@ -17,7 +17,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 import { ExecutableResolver } from "../../../install-truth/api";
-import type { SidebarPackageView } from "../../../install-truth/api";
+import type { JumpEntry, SidebarPackageView } from "../../../install-truth/api";
 import { acquireSharedBuildCenter } from "../../../install-truth/center/shared-center";
 import { getLogger } from "../../../logger";
 import { isLaunchFileName, trimLaunchDisplayPrefix } from "./launch-detect";
@@ -29,7 +29,7 @@ const log = getLogger("run-data-source");
 export interface RunTarget {
     pkg: string;
     executable: string;
-    /** 安装侧入口绝对路径(2026-10-13 陈旧警告富集;lookup 未命中 = undefined) */
+    /** 安装侧入口绝对路径(2026-10-13 陈旧警告富集;2026-10-16 起 = `staleInstallTargetOf`:清单未实证(python develop 语义)或落点为空 = undefined) */
     installPath?: string;
     /** 主源码候选(2026-10-13 陈旧警告富集;同上) */
     srcPath?: string;
@@ -119,8 +119,8 @@ export function splitOwnerReadiness<T extends { pkg: string; name: string }>(own
     return out;
 }
 
-/** 陈旧警告设置键(ROS2.run.staleWarning;默认开——刻意测试旧安装的用户可关闭,照 preflight 键常量先例) */
-export const RUN_STALE_WARNING_SETTING = "run.staleWarning";
+/** 陈旧警告设置键(ROS2.tool.run.staleWarning,2026-10-18 键族迁 `tool.` 层;默认开——刻意测试旧安装的用户可关闭,照 preflight 键常量先例) */
+export const RUN_STALE_WARNING_SETTING = "tool.run.staleWarning";
 /** 同目标冷却窗口(2026-10-13 用户裁定:30 秒) */
 export const STALE_NOTIFY_COOLDOWN_MS = 30_000;
 /**
@@ -140,6 +140,31 @@ export function shouldNotifyStale(last: number | undefined, now: number, cooldow
     return last === undefined || now - last >= cooldownMs;
 }
 
+/**
+ * 陈旧比对的安装侧目标选择(纯函数,2026-10-16 误报破案):
+ * **只认清单实证的真实文件落点** ——
+ *  · `pythonInstall.verified !== true`(ament_python 无安装清单,develop/符号安装语义:egg-link 直通
+ *    src,改了即生效,比对无意义)→ undefined,警告自然不弹。此前富集兜底 `installPaths[0]` 按字母序
+ *    恒为 `devDir = build/<pkg>`(**目录**;它是 devModuleFile 路径的前缀,且 "build" < "install"),
+ *    而目录 mtime 只随直接子项增删变化 = 冻结在建包时刻 —— 实机逐秒复现(2026/10/12 17:47:36),
+ *    每个 ament_python 可执行每次运行必弹假警报;ament_cmake 有清单(scriptPath 实证)不受影响;
+ *  · 目录类别名(devDir/sitePackagesDir)只服务 byInstallPath 路径反查索引,永不参与陈旧比对
+ *    (展示端 notifyStaleIfNeeded 另有 isFile 门双保险);
+ *  · cpp 与 copy 安装 python(清单实证的真实文件)维持原口径:installPath 优先,空则 installPaths[0]。
+ */
+export function staleInstallTargetOf(entry: JumpEntry | undefined): string | undefined {
+    if (entry === undefined) {
+        return undefined;
+    }
+    if (entry.pythonInstall !== undefined && entry.pythonInstall.verified !== true) {
+        return undefined;
+    }
+    if (entry.installPath !== "") {
+        return entry.installPath;
+    }
+    return entry.installPaths?.[0];
+}
+
 /** 同目标冷却表(kind 前缀 + pkg/name;会话级,重载清零——跨会话记忆不值得) */
 const staleNotifyLast = new Map<string, number>();
 
@@ -147,9 +172,10 @@ const staleNotifyLast = new Map<string, number>();
  * 陈旧**附加**警告(非阻塞,2026-10-13 用户裁定「附加不阻碍」):
  * 源比安装产物新时,弹**非模态警告气泡**(2026-10-14 用户裁定由状态栏改来:原"状态栏 4 秒"存在感弱,
  * 气泡实测约 12 秒自动收起、不积累,且可带「不再显示」按钮);运行/启动**照常执行**——本函数只附加信息,
- * 不等待、不拦截。点「不再显示」→ 写 `ROS2.run.staleWarning = false` 永久静默(有工作区写工作区层,
- * 否则用户层,照 preflight setPreflightMode 先例)。statSync 跟随软链,symlink/develop 安装两侧 mtime
- * 天然相等 → 零误报;源缺失 → 不警(装好的那份即唯一真相)。30 秒同目标冷却防刷屏。
+ * 不等待、不拦截。点「不再显示」→ 写 `ROS2.tool.run.staleWarning = false` 永久静默(有工作区写工作区层,
+ * 否则用户层,照 preflight setPreflightMode 先例)。statSync 跟随软链,symlink 安装两侧 mtime
+ * 天然相等 → 零误报;源缺失 → 不警(装好的那份即唯一真相);落点非文件(目录类别名)→ 不警
+ * (isFile 门,2026-10-16 误报破案);30 秒同目标冷却防刷屏。
  */
 export function notifyStaleIfNeeded(kind: "run" | "launch", pkg: string, name: string, srcPath: string | undefined, installPath: string | undefined): void {
     const enabled = vscode.workspace.getConfiguration("ROS2").get<boolean>(RUN_STALE_WARNING_SETTING, true);
@@ -167,7 +193,10 @@ export function notifyStaleIfNeeded(kind: "run" | "launch", pkg: string, name: s
     }
     try {
         if (installPath !== undefined && installPath !== "") {
-            installMtimeMs = fs.statSync(installPath).mtimeMs;
+            // isFile 门(2026-10-16):目录类别名(devDir 等)的 mtime 冻结在其直接子项增删时刻,
+            // 与"落点新旧"无关 —— 绝不参与比对(破案记录见 run/README.md 2026-10-16 行)
+            const st = fs.statSync(installPath);
+            installMtimeMs = st.isFile() ? st.mtimeMs : undefined;
         }
     } catch {
         installMtimeMs = undefined;
@@ -254,13 +283,17 @@ export function createInstallTruthRunDataSource(): RunDataSource {
             }
             await resolver.ensureFresh("run.ownersOfSource");
             const owners = (await resolver.ownersOfSource(srcPath)) ?? [];
-            // 路径富集(2026-10-13 陈旧警告):lookup 走 O(1) 缓存索引,取安装侧入口与主源码候选
+            // 路径富集(2026-10-13 陈旧警告):lookup 走 O(1) 缓存索引,取安装侧入口与主源码候选;
+            // 安装侧目标经 staleInstallTargetOf 甄别(2026-10-16:无清单实证的 python develop 落点不参与比对)
             const enriched: Array<RunTarget & { name: string }> = [];
             for (const o of owners) {
                 const t: RunTarget & { name: string } = { pkg: o.pkg, executable: o.name, name: o.name };
                 const lookup = await resolver.lookup(o.pkg, o.name);
                 if (lookup?.entry !== undefined) {
-                    t.installPath = lookup.entry.installPath !== "" ? lookup.entry.installPath : lookup.entry.installPaths?.[0];
+                    t.installPath = staleInstallTargetOf(lookup.entry);
+                    if (t.installPath === undefined) {
+                        log.debug(vscode.l10n.t("Stale check skipped for {0}/{1}: landing not manifest-verified (develop/symlink install is always current)", o.pkg, o.name));
+                    }
                     t.srcPath = lookup.entry.srcPaths[0];
                 }
                 enriched.push(t);

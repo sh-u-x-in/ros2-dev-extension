@@ -98,6 +98,8 @@ export class DataLayer implements PackageDataApi {
     /** 事件廉价预过滤(2026-09-06;缺省全部相关) */
     private readonly isDirRelevant: (dir: string) => boolean;
     private readonly unsubscribers: Array<() => void> = [];
+    /** P2 start 化:是否已显式首载 */
+    private started = false;
 
     constructor(
         fetcher: PackageFetcher,
@@ -121,7 +123,19 @@ export class DataLayer implements PackageDataApi {
                 void this.refreshFromCacheSnapshot();
             })
         );
-        void this.forceRefresh(); // 首载
+        // P2 组件 start 化:构造期首载(:124 void this.forceRefresh())移入显式 start()——
+        // 构造零副作用,编排层按环境门调用 start 后才首扫。
+    }
+
+    /** 显式首载(P2 start 化;幂等):编排层在环境门成立时调用,此后 timer/watcher 驱动增量 */
+    start(): void {
+        if (this.started) {
+            return;
+        }
+        this.started = true;
+        this.forceRefresh().catch((err) => {
+            log.warn(`package-core initial scan failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
     }
 
     getState(): Readonly<PackageDataState> {

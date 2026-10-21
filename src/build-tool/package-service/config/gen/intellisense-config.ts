@@ -35,7 +35,7 @@ import { getLogger } from "../../../../logger";
 import { getExtensionConfiguration } from "../../../../vscode-utils";
 import { isPythonPackage, type PackageEntry } from "../../../package-core/api";
 import { resolveDistroConfig } from "./distro-templates";
-import type { IntellisenseConfig, IntellisenseConfigOptions } from "./intellisense-api";
+import type { IntellisenseConfig, IntellisenseConfigOptions, SyncFileReport, SyncOutcome } from "./intellisense-api";
 import {
     absIncludeForPkg,
     collectPythonDirs,
@@ -196,8 +196,8 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
         return { ws, install, installPrefixes, sys, all: [...ws, ...install, ...sys] };
     }
 
-    /** 易增(无感):新 include 自动补入(按引擎侧;幂等——存在→合并缺失条目,缺失→生成) */
-    async function applyAdditions(entries: PackageEntry[], sides: ActiveSides): Promise<void> {
+    /** 易增(无感):新 include 自动补入(按引擎侧;幂等——存在→合并缺失条目,缺失→生成);返回逐文件明细报表(2026-10-20 动态反馈) */
+    async function applyAdditions(entries: PackageEntry[], sides: ActiveSides): Promise<SyncFileReport[]> {
         // 安装布局每轮重读(单文件、极廉价):布局切换后三份配置要按新形态整块重算
         const layout = await readInstallLayout(opts.workspaceRoot, log);
         // 发行版模板分派(2026-09-28 VD-2):env.ROS_DISTRO 查表 + PYTHONPATH 观测 ABI 覆盖(观测优先,表兜底);
@@ -217,15 +217,27 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
         const pythonOv = readOverrides(ENTRY_OVERRIDES_PYTHON_SETTING);
         const inc = collectAllIncludes(entries, layout);
         log.debug(`易增执行:布局=${layout};包 ${entries.length} 个 → include 工作空间 ${inc.ws.length}/安装 ${inc.install.length}/环境 ${inc.sys.length}(平铺 ${inc.all.length});引擎 cpptools=${sides.cpptools}/clangd=${sides.clangd};替换表条数 cpp=${Object.keys(cppOv).length}/clangd=${Object.keys(clangdOv).length}/python=${Object.keys(pythonOv).length}`);
+        const reports: SyncFileReport[] = [];
         if (sides.cpptools) {
-            await syncCppProperties(opts.workspaceRoot, inc.all, cppOv); // 存在→合并缺失条目,缺失→生成
+            reports.push(await syncCppProperties(opts.workspaceRoot, inc.all, cppOv)); // 存在→合并缺失条目,缺失→生成
+        } else {
+            reports.push({ file: "cpp", written: false, facts: {}, idle: "disabled" });
         }
         if (sides.clangd) {
             // 布局一并传入(安装组注释与归正都按它);install 传**父层前缀**供 clangdGroupDirs 展开子根
-            await syncClangd(opts.workspaceRoot, { ws: inc.ws, install: inc.installPrefixes, sys: inc.sys }, layout, clangdOv); // 存在→按组分补缺失,缺失→生成
+            reports.push(await syncClangd(opts.workspaceRoot, { ws: inc.ws, install: inc.installPrefixes, sys: inc.sys }, layout, clangdOv)); // 存在→按组分补缺失,缺失→生成
+        } else {
+            reports.push({ file: "clangd", written: false, facts: {}, idle: "disabled" });
         }
-        const envDirs = collectPythonDirs(opts.environment.getEnv(), opts.workspaceRoot);
-        await syncPythonPaths(opts.workspaceRoot, entries, envDirs, layout, distroCfg.tpl, pythonOv);
+        // Python extraPaths 的维护由**专属开关** `ide.maintainPythonPaths` 独立管理(2026-10-21 用户裁定:
+        // 引擎开关只管 C++ 头文件两侧,Python 另立设置;默认 true = 维持既有行为)
+        if (getExtensionConfiguration().get<boolean>("ide.maintainPythonPaths", true)) {
+            const envDirs = collectPythonDirs(opts.environment.getEnv(), opts.workspaceRoot);
+            reports.push(await syncPythonPaths(opts.workspaceRoot, entries, envDirs, layout, distroCfg.tpl, pythonOv));
+        } else {
+            reports.push({ file: "python", written: false, facts: {}, idle: "disabled" });
+        }
+        return reports;
     }
 
     /**
@@ -290,13 +302,43 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
         }
     }
 
-    /** 统一变化处理:易增(无感)+ 难删(有感,候选来自事件差量累计),按引擎侧执行 */
-    async function handleIncludesChange(): Promise<void> {
+    /**
+     * 域门控(2026-10-17,用户裁定;2026-10-18 P1 接统一门):门槛(ROS 2 环境可用)绝对 &&
+     * (门户(有包) || 倾向(env.allowEmptyWorkspace,默认关))。与构建任务提供器门同一公式
+     * (注入 opts.gate = GateService 唯一载体;门槛不受倾向豁免——环境不可用时**零增零删**,
+     * 无 ROS 环境绝不写盘,消失候选保留待门开后延迟处理,不丢不弹);倾向每次实时读配置,改后即时生效。
+     * 门开 → 原易增/难删流程,返回 applied。未注入 gate(无头测试)走本地兜底公式(同式同键)。
+     */
+    async function handleIncludesChange(): Promise<SyncOutcome> {
+        if (opts.gate) {
+            const decision = opts.gate.evaluate();
+            if (!decision.allowed) {
+                if (decision.reason === "env") {
+                    log.info(`配置生成域门:门槛关(环境不可用:${opts.environment.getEnvIssue()}),零写盘(消失候选保留 ${pendingRemoved.size} 条待门开)`);
+                } else {
+                    log.info("配置生成域门:门槛开但门户关(零包)且倾向关(env.allowEmptyWorkspace=false),零写盘");
+                }
+                return { outcome: "skipped", reason: decision.reason ?? "env" };
+            }
+        } else {
+            // 本地兜底公式(无头测试/未注入共享门;与 gate.ts evaluateGateDecision 同式同键)
+            const envIssue = opts.environment.getEnvIssue();
+            if (envIssue !== null) {
+                log.info(`配置生成域门:门槛关(环境不可用:${envIssue}),零写盘(消失候选保留 ${pendingRemoved.size} 条待门开)`);
+                return { outcome: "skipped", reason: "env" };
+            }
+            const fallbackEntries = workspaceEntries();
+            const tendency = getExtensionConfiguration().get<boolean>("env.allowEmptyWorkspace", false);
+            if (fallbackEntries.length === 0 && !tendency) {
+                log.info("配置生成域门:门槛开但门户关(零包)且倾向关(env.allowEmptyWorkspace=false),零写盘");
+                return { outcome: "skipped", reason: "packages" };
+            }
+        }
         const entries = workspaceEntries();
         const currentDirs = new Set(entries.map((e) => e.dir));
         const sides = resolveActiveSides();
         log.debug(`配置重算入口:包 ${entries.length} 个,待确认消失候选 ${pendingRemoved.size} 个,引擎 cpptools=${sides.cpptools}/clangd=${sides.clangd}`);
-        await applyAdditions(entries, sides);
+        const report = await applyAdditions(entries, sides);
         if (pendingRemoved.size > 0) {
             const pending = [...pendingRemoved.values()];
             pendingRemoved.clear();
@@ -306,6 +348,7 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
                 await applyRemovals(stillGone, sides);
             }
         }
+        return { outcome: "applied", report };
     }
 
     /** 事件防抖调度:包/环境变化共用,窗口内多事件合并一次执行 */
@@ -321,8 +364,8 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
     }
 
     return {
-        async sync(): Promise<void> {
-            await handleIncludesChange();
+        async sync(): Promise<SyncOutcome> {
+            return handleIncludesChange();
         },
         subscribe(onDidChange) {
             // 包变化 → 防抖合并追踪(maintain-all:只关心 workspace 域成员变化;ignore 翻转零动作)
@@ -376,3 +419,6 @@ export function createIntellisenseConfig(opts: IntellisenseConfigOptions): Intel
 // 修改时间:2026-10-14(接入生成条目替换表三键 ide.entryOverrides.clangd/cpptools/python(同日由合并键拆分,
 // 每 sync 只收本文件专属表,撞 key 结构性不可能):applyAdditions 每轮各读一次(非对象值容错空表)分路由透传;
 // 【表盲红线】applyRemovals 有感删除与预检不感知任何一张表)
+// 修改时间:2026-10-17(域门控,用户裁定公式"门槛(环境可用)绝对 && (门户(有包) || 倾向(ide.allowEmptyWorkspace,默认关))":
+// handleIncludesChange 入口判定,门关零增零删(候选保留延迟处理)、返回 SyncOutcome 供手动命令反馈;
+// IntellisenseEnvSource 接口补 getEnvIssue(facade 结构化兼容零接线);事件防抖路径丢弃返回值语义不变)

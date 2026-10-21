@@ -24,13 +24,15 @@ export interface DriverOptions {
     workspaceRoot?: string;
 }
 
-/** 组装驱动层为一个 PackageFetcher（合并事件流：定时器 + fs 监听） */
+/** 组装驱动层为一个 PackageFetcher(合并事件流:定时器 + fs 监听)。
+ *  P2 组件 start 化:构造零副作用——timer/watcher 延迟到 start() 创建;
+ *  start 前到达的 setRefreshIntervalMs 暂存,start 按暂存值创建(reconfigure 可先于 start 到达)。 */
 export function createPackageFetcher(options: DriverOptions = {}): PackageFetcher {
-    const timer: DriverTimer = createTimer(options.refreshIntervalMs ?? 60000);
-    const watcher: FsWatcher = createFsWatcher({
-        debounceMs: options.watchDebounceMs ?? 500,
-        workspaceRoot: options.workspaceRoot,
-    });
+    let currentIntervalMs = options.refreshIntervalMs ?? 60000;
+    let timer: DriverTimer | undefined;
+    let watcher: FsWatcher | undefined;
+    let started = false;
+    let disposed = false;
     const listeners = new Set<(ev: DriverEvent) => void>();
 
     const emit = (ev: DriverEvent): void => {
@@ -39,22 +41,36 @@ export function createPackageFetcher(options: DriverOptions = {}): PackageFetche
         }
     };
 
-    // 定时器到点 + fs 变化 → 合并成驱动原始事件流
-    timer.onTick(() => emit({ kind: "timer-tick" }));
-    watcher.onExternalChange((ev) => emit(ev));
-
     return {
+        start() {
+            if (started || disposed) {
+                return;
+            }
+            started = true;
+            timer = createTimer(currentIntervalMs);
+            watcher = createFsWatcher({
+                debounceMs: options.watchDebounceMs ?? 500,
+                workspaceRoot: options.workspaceRoot,
+            });
+            // 定时器到点 + fs 变化 → 合并成驱动原始事件流
+            timer.onTick(() => emit({ kind: "timer-tick" }));
+            watcher.onExternalChange((ev) => emit(ev));
+        },
         onExternalChange(cb) {
             listeners.add(cb);
             return () => listeners.delete(cb);
         },
         setRefreshIntervalMs(ms) {
-            timer.setIntervalMs(ms);
+            currentIntervalMs = ms; // start 前到达:暂存,start 按此值创建
+            timer?.setIntervalMs(ms);
         },
         dispose() {
-            timer.dispose();
-            watcher.dispose();
+            timer?.dispose();
+            watcher?.dispose();
+            timer = undefined;
+            watcher = undefined;
             listeners.clear();
+            disposed = true;
         },
     };
 }

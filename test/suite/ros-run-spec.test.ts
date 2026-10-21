@@ -106,9 +106,10 @@ describe('记忆键:按目标分槽(用户裁定 2026-09-25)', () => {
     });
 });
 
-describeSeeding('run 域 share-spec:设置 → spec(合并出厂默认)', () => {
-    const RUN_KEY = 'run.shareSpec';
-    const LAUNCH_KEY = 'launch.shareSpec';
+describeSeeding('run 域 share-spec:设置 → spec(合并出厂默认;2026-10-17 两拆分键)', () => {
+    const RUN_TEMPLATE_KEY = 'tool.run.template';
+    const RUN_PRESETS_KEY = 'tool.run.presets';
+    const LAUNCH_TEMPLATE_KEY = 'tool.launch.template';
 
     beforeEach(() => {
         vscodeStubConfig.reset();
@@ -123,20 +124,18 @@ describeSeeding('run 域 share-spec:设置 → spec(合并出厂默认)', () => 
     });
 
     it('显式给空 template → 尊重用户(展开为 empty,调用方拒绝执行)', () => {
-        vscodeStubConfig.store[RUN_KEY] = { template: '' };
+        vscodeStubConfig.store[RUN_TEMPLATE_KEY] = '';
         const r = shareSpec.expandRos2Run({ pkg: 'p', executable: 'e' });
         assert.strictEqual(r.empty, true);
     });
 
-    it('自定义模板 + picked 槽位照常生效;launch 走自己的设置键', () => {
-        vscodeStubConfig.store[RUN_KEY] = {
-            template: 'ros2 run ${pkg} ${executable} ${1}',
-            argv_list: [{ argv: '--spin', describe: '自转' }],
-        };
+    it('自定义模板 + 预设表槽位照常生效;launch 走自己的设置键', () => {
+        vscodeStubConfig.store[RUN_TEMPLATE_KEY] = 'ros2 run ${pkg} ${executable} ${1}';
+        vscodeStubConfig.store[RUN_PRESETS_KEY] = { '1|自转': '--spin' };
         const r = shareSpec.expandRos2Run({ pkg: 'p', executable: 'e', picked: [0] });
         assert.deepStrictEqual(r.argv, ['ros2', 'run', 'p', 'e', '--spin']);
 
-        vscodeStubConfig.store[LAUNCH_KEY] = { template: 'ros2 launch ${launch_path}' };
+        vscodeStubConfig.store[LAUNCH_TEMPLATE_KEY] = 'ros2 launch ${launch_path}';
         const l = shareSpec.expandRos2Launch({
             pkg: 'p',
             launch_file: 'demo.launch.py',
@@ -146,7 +145,7 @@ describeSeeding('run 域 share-spec:设置 → spec(合并出厂默认)', () => 
     });
 
     it('launch_path 缺省时 ${launch_path} 展开为空(不会原样泄漏)', () => {
-        vscodeStubConfig.store[LAUNCH_KEY] = { template: 'ros2 launch ${pkg} ${launch_file} ${launch_path}' };
+        vscodeStubConfig.store[LAUNCH_TEMPLATE_KEY] = 'ros2 launch ${pkg} ${launch_file} ${launch_path}';
         const l = shareSpec.expandRos2Launch({ pkg: 'p', launch_file: 'f.launch.py' });
         assert.deepStrictEqual(l.argv, ['ros2', 'launch', 'p', 'f.launch.py']);
     });

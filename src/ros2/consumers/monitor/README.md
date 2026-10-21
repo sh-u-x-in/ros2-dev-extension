@@ -39,6 +39,7 @@
 
 | 时间(精确到分) | 说明 |
 |---|---|
+| 2026-10-18 | **P4 常驻助手围栏**:①startHelperFlow 入口环境门(门关一句拒绝带原因,不再 starting 播报+15s 空转);②param-helper-client:spawn 前环境闸(三自愈入口单点)+熔断自动停(瞬态 3 次/预检退出码 100+掩码立即;desiredRunning 复位+failureCallback 上抛状态页)+连接首帧 hello 环境指纹握手(proto/ROS_VERSION/DISTRO/DOMAIN_ID/RMW;deny=指纹不匹配置失败态停连)+request 超时改用参数(修 ping 3s/resync 15s 退化 30s 真 bug)+envFacade/failureCallback 双注入(setParamHelperEnvFacade/setParamHelperFailureCallback,ros2-monitor 装配接线,compose 注入);③Python:param_helper.py 启动预检位掩码(0x01 rclpy/0x02 rcl_interfaces/0x04 param_helper_lib/0x08 main 可调用/0x10 disk_log 可调用;stderr 结构化+退出码 100+mask,try 罩住 import 期修裸 traceback)+kernel PROTO_VERSION/HELLO_TIMEOUT_SEC/指纹归一 helper_fingerprint+server 连接首帧 hello 校验(deny 踢除/未验证 3s 超时踢/不计 cl-num/不参与广播心跳)+status-bar 诊断改 helper 真实依赖(python3/ROS_DISTRO/AMENT,替代错位 ros2 CLI+daemon 端口);④test/vm 两脚本补 hello 首帧;测试=helper-gate 套件 4 例(入口门/spawn 闸/掩码译码/预检立即熔断)+monitor-api hello 帧序断言 |
 | 2026-09-29 | 建档(补各文件夹 README 批次):monitor 目录此前无 README,演进史见 `../README.md` 修改记录(2026-09-26 常驻助手落地/daemon 退役/事件驱动;09-28~29 服务/动作表单与键盘迭代) |
 | 2026-10-03 | 十二轮拆分(单文件 <500 行):ros2-monitor.ts 1203 行 → 本体 236 + monitor-html/css-base/css-forms/refresh/helper-flows 五模块;行为零变化,HTML 逐行 verbatim(CSS 内两行 JS 风格 // 注释转 CSS 注释);launchMonitor 唯一导出与 registry/core.ts 引用不变 |
 | 2026-10-03 | 十三~十六轮:表单行序重排与基本行计数/参数树叶子去 (1)(详见 webview/README);monitor-css-forms 同步(section-header-end/node-action-status 等样式) |

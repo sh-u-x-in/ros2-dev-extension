@@ -24,6 +24,7 @@
 
 | 文件 | 职责 | 依赖 |
 |---|---|---|
+| 2026-10-18 | **接统一环境门(P1)**:IntellisenseConfigOptions 增可选 gate(GateService,与构建任务门同源裁决,经 package-core/api 纯类型依赖);handleIncludesChange 改走注入门(skipped 原因仍区分 env/packages),未注入(无头测试)保留本地兜底公式(同式,倾向键随统一键更名 env.allowEmptyWorkspace 默认关);组合根 extension.ts 注入 sharedGate;倾向豁免用例播种键随改 |
 | `distro-templates.ts` | **发行版模板注册表 + 版本发现**(2026-09-28 VD-1,纯函数零 vscode):`DISTRO_PATH_TEMPLATES`(9 个 KNOWN 发行版全覆盖)/ `resolveDistroTemplate`(未知名回落 DEFAULT)/ `observePythonAbi`(PYTHONPATH 系统段观测 pythonAbi,/opt/ros 优先)/ `resolveDistroConfig`(查行 + 观测覆盖;cmakePythonPurelib 的 ABI 段连带替换、purelib 形态沿用表行;未知发行版观测不组合) | intellisense-utils(类型与 DEFAULT) |
 | `intellisense-api.ts` | **接口层**(纯类型,零实现):`IntellisenseConfigOptions`(workspaceRoot / getState / environment 门面)/ `IntellisenseConfig`(sync / subscribe / dispose) | package-core/api(仅 type) |
 | `intellisense-config.ts` | **编排层**:引擎开关(`ROS2.ide.intellisenseEngine` = auto/cpptools/clangd/both/none)、800ms 防抖、两路事件订阅(包变化 + 环境变化;**无** include 目录监听——无条件收录,见语义 #2)、**maintain-all 差量消费(2026-09-08:事件 10 域,只订阅 workspace 域;有感候选 = oldWorkspace−workspace 事件差量,本地不维护上一版)**、**易增时每轮 `readInstallLayout()` 读布局并传给 cpp / clangd / python 三侧(2026-09-16)**、易增(无感)/难删(有感:**复核 → 按类型定侧(python 只走 extraPaths)→ 弹窗前存在性预检 → 60s 弹窗确认**(2026-09-08 由 10s 调长);确认计数/措辞以**包**为单位;黑名单机制已移除 2026-09-08) | utils / render、vscode |
@@ -32,6 +33,17 @@
 | `install-layout-watch.ts` | **安装布局信号监听**(2026-09-16 自 extension.ts 收编;组合根只组装):`registerInstallLayoutWatch({ workspaceRoot, onLayoutSignal, logger })` → ①`RelativePattern(root, "*")` 盯 **install 目录条目**(按名过滤;补充信号)②标记文件**以文件自身为 base**(`<ws>/install/.colcon_install_layout` + `*`,文件型非递归监视:不受 `files.watcherExclude` 影响;不存在时挂起轮询~5s 出现即合成 create;方案 2)③兜底轮询 `pollIntervalMs`(默认 60s,0 = 关闭;当前调用点暂设 0);1s 防抖 + 目录出现后 6s 有界补查;依赖可注入(`createWatcher` / `readMarkerContent`),可无头测试 | vscode、node:fs / node:path |
 
 ## 语义要点(2026-09-16 现状)
+
+### 0. 域门控(2026-10-17,用户裁定)
+
+**公式:`门槛(ROS 2 环境可用) && (门户(有包) || 倾向(ROS2.ide.allowEmptyWorkspace,默认关))`** —— 与 buildTaskProviderGate 同一公式;门槛**绝对**,倾向只豁免门户。
+
+- 判定位置 = `handleIncludesChange` 入口(**三条触发路唯一汇合点**:激活 sync / 事件防抖 sync / 手动命令 sync)——一处关门全链封死;
+- **门槛关(环境不可用)→ 零增零删**:无 ROS 环境绝不写盘(用户裁定"绝对不允许写"包含不删);消失候选保留待门开后延迟处理(延迟不丢失、不弹窗);log.info 留痕附 envIssue 摘要;
+- **门开但零包 + 倾向关(默认)→ 零写盘**(行为改变点:此前"ROS 机器空工作区写环境侧条目"的 0→1 预生成默认取消,需显式开 `ROS2.ide.allowEmptyWorkspace`);
+- 倾向每次实时读配置(无缓存无 context key),改后即时生效;门开 → 原易增/难删流程,`sync()` 返回 `SyncOutcome`(applied / skipped{env|packages})供手动命令如实反馈;
+- 恢复语义:包扫描完成(packageCore.onDidChange)与 source 完成(onEnvChanged)两路事件本就被订阅,门开后自动再触发 sync,零丢失唤醒;
+- 背景:2026-10-17 只读考据实证——激活事件 `onLanguage:cpp/python` 使任意 C++/Python 项目激活本扩展,而模板/渲染层无任何环境门控,无 ROS 机器上从零生成/追加/改写三文件(c_cpp_properties.json/.clangd/settings.json);python 侧本就有空表早退,本门控后全域收敛。
 
 ### 1. 数据流与触发
 
@@ -139,6 +151,8 @@ cppStandard 旧默认 gnu++17 → gnu++20(与 .clangd 对齐)。2026-09-15:env �
 
 | 时间(精确到分) | 关键变化 | 详档 |
 |---|---|---|
+| 2026-10-20 22:51 | **动态反馈报表(用户裁定"改了哪些部分+没改的原因,不用固定文本涵盖所有")**:`SyncOutcome` applied 分支携 `SyncFileReport[]`(file/written/facts/idle,事实键封闭清单入册 api 层);三 sync 渲染函数零写盘行为变化顺手记 facts 返回报表(每个既有写盘/不写盘分支一个事实键);编排层 applyAdditions 收三报表,引擎侧未启用给 `idle:"disabled"`;命令 `ROS2.regenerateIntellisenseConfig` 弃固定一句话,新纯模块 intellisense-report.ts 查表译多行通知(有更新→「已更新」+逐文件事实行;全规范→「已检查均规范」+逐文件 idle 原因行;含"无 Add 块保守不代建"这一 issue #4 尾巴的事实化呈现);防抖调度路径照旧丢弃返回值零行为变化;旧固定文案键死键删除;nls 净增 25 键(英源+zh);测试 +5(三侧报表计数/conservative/empty/话术两 headline)+2 处编排断言升格(applied 连带验报表三侧 written);定点 59/59,全量 junit 1460→1464、0 失败 | 本文 + intellisense-report.ts + api/render/config 尾注 |
+| 2026-10-17 | **域门控(用户裁定公式"门槛绝对 && (门户‖倾向)")**:`handleIncludesChange` 入口判定 `getEnvIssue()===null && (有包‖ide.allowEmptyWorkspace[默认 false])`,门关零增零删(候选保留延迟处理);新设置键 `ROS2.ide.allowEmptyWorkspace`(ide 组 order 6);`sync()` 返回 `SyncOutcome` 供手动命令按原因反馈(2 新 l10n 键);IntellisenseEnvSource 接口补 getEnvIssue(facade 结构化兼容零接线)。背景=激活事件 onLanguage:cpp/python 使任意项目激活 + 渲染层无门控 → 无 ROS 机器自动写三文件(考据详见会话档);连带:smart-build 入口环境早退 + onDidChangeEnv/allowEmptyWorkspace 监听补 refreshContextKeys(修 ctrl+shift+b when 陈值) | 本文 §0 + intellisense-config.ts 尾注 |
 | 2026-10-15 00:40 | **认领落盘修复 + 串行 + 原子写 + 测试假绿根治(用户实测"日志说改了,文件没改",裁定"原子性必须做,串行必须做,而且需要进行测试")**:①认领变更(建数组/追加/去重/补 version)引入 `claimChanged`,写盘条件 = claimChanged‖pathChanged——追加/去重曾只改内存,includePath 恰好无需变化时被"无变化"闸门吞掉(无头复现实锤);②cpp/clangd 同步与有感删除全部入单飞链(per-root 串行,读-改-写竞态消除);③`writeFileAtomic`(临时文件+rename)替换全部 cpp/clangd 直接写(断电不产半截文件);④**测试假绿根治**:render 组整组跳过拆除——stub 旗标在集成宿主不置 → before 整组 skip → junit 空壳(tests=37/零 testcase/time=0.000)被误读为"全过",本会话 render 层四批用例实际一条未跑;改为 cpp/clangd 用例双宿主真跑 + python 依赖用例逐用例守卫跳过;tidy 用例 token 视图修 indexOf 撞位;无头复跑 46/0、npm test render 31 实跑 0 失败(6 python 用例按设计跳过) | 本文 + intellisense-render.ts 尾注 |
 | 2026-10-14 23:50 | **c_cpp_properties 标准字段收缩(用户裁定"极其克制",所有权移交用户)**:从零生成/追加成员缩为三键(name/includePath/compileCommands,browse·cppStandard·cStandard·intelliSenseMode·compilerPath 不再写);补写字段补齐/升级整段废除(compileCommands 不再补、cppStandard 不再强写也不再把用户手写的 gnu++17 强翻 gnu++20、cStandard 不再补),补写只动 includePath;CPP_DEFAULT_CPP_STANDARD 常量废除;存量 gnu++20 不回收;`.clangd` 的 -std=c++20 同性质缩减另案 | 本文 + intellisense-render.ts 尾注 |
 | 2026-10-14 23:20 | **c_cpp_properties 补写鲁棒化(用户裁定,修"删 includePath 键 → browse 陪葬+键序重排"案)**:①管理权白名单——只接管第一个 `name===\"ros2\"` 成员,没找到追加到数组末尾(不抢 [0]),重复 ros2 保留最前其余删除;用户自有成员/顶层自定义键零接触;②外科手术——parse 成功后禁止整体替换,补字段全在原对象上做(JSON.parse 保键序);③宽容解析链——严格 JSON.parse → jsonc-parser(注释/尾逗号,提升为直接依赖 ^3.3.1)→ 两连败才从零生成(唯一弃稿场景,宽容命中日志声明丢注释);单飞/原子写暂缓(未暴露) | 本文 + intellisense-render.ts 尾注 |
@@ -179,6 +193,7 @@ cppStandard 旧默认 gnu++17 → gnu++20(与 .clangd 对齐)。2026-09-15:env �
 
 | 时间(精确到分) | 说明 |
 |---|---|
+| 2026-10-17 | **域门控(用户裁定)**:公式 `门槛(环境可用) && (门户(有包) ‖ 倾向(ide.allowEmptyWorkspace,默认关))`,handleIncludesChange 入口单点判定;门关零增零删(pendingRemoved 候选保留)、sync() 返回 SyncOutcome(skipped 附 env/packages 原因);测试 +7(编排层立桩:门槛绝对/门开照写/门户关零写盘/倾向豁免/事件恢复/双原因返回/候选保留与延迟补弹,均无头+双宿主守卫) |
 | 2026-10-15 00:40 | **认领落盘修复 + 串行 + 原子写 + 测试假绿根治(用户裁定)**:①`syncCppProperties` 拆壳入 `enqueueSettingsWrite`(Inner 化),认领段四处置 `claimChanged`(建数组/追加/去重/version 补),写盘条件 `claimChanged || pathChanged`,日志增"认领变更落盘"段;`syncClangd`/`removeCppIncludes`/`removeClangdIncludes` 同款拆壳入链;②新 `writeFileAtomic(filename, content)`(tmp+rename),替换 cpp/clangd 全部 10 处直接写;③测试:`intellisense-config.test.ts` 拆整组 before-skip(空壳假绿根治)+ 模块级 `HEADLESS` 旗标 + python 依赖 5 用例逐例守卫(集成宿主 python.* 不可写)+ beforeEach python 复位加 catch;tidy 用例 body 改 token 视图(剥 "- " 前缀,修 indexOf 撞位断言失真);JSONC 用例改语义(stale includePath 制造真实变更触发重写,断言注释丢失+数据保留);验证:无头 mocha 46/0(4 失败清零),npm test render 组 31 实跑/0 失败(time 1.242s,原空壳 0.000),全套 1383/0 |
 | 2026-10-14 23:50 | **标准字段收缩(用户裁定)**:①`freshRos2Config` 缩为三键(name/includePath/compileCommands),browse 块与 Linux 三键分支删除;②正常路径"字段补齐/升级"段(compileCommands 补/cppStandard 缺失强写+gnu++17 强翻 gnu++20/cStandard 补+fieldChanges 机制)整段废除——调查坐实 cppStandard 每轮强写强翻(用户手写 gnu++17 也被翻);③`CPP_DEFAULT_CPP_STANDARD` 常量废除,从零生成 log 去 cppStandard 尾巴,头注释两段改写;④测试 5 处断言改写(首次生成三键形状 deepStrictEqual/已存在 gnu++17 保留+compileCommands·cStandard 不出现/用户 cppStandard 永不触碰含 gnu++17 双段/鲁棒化接管保留 gnu++17/报废重建三键形状),例数保持 1383/0 |
 | 2026-10-14 23:20 | **c_cpp_properties 补写鲁棒化(用户裁定,根因=旧"结构异常→整体重建"分支把"合法 JSON 只缺 includePath 键"也当损坏,内置字面量整写致 browse 陪葬+键序重排)**:①解析链三段:严格 JSON.parse → jsoncParser.parse 宽容(注释/尾逗号;依赖提升 jsonc-parser ^3.3.1 直接依赖)→ 两连败/顶层非对象才从零生成(`freshRos2Config` 助手,含 browse,消字面量重复);②ros2 成员认领:`configurations` 非数组原对象建数组,找首个 `name===\"ros2\"` 接管,未找到 push 末尾(用户 [0] 零位移),重复成员清理保留最前,`version` 缺失补 4;③includePath 键缺失/非数组 → 外科补字段(browse/其余字段/键序原样,includePath 尾插);④正常合并路径 cfg0→cfg 仅换作用对象,逻辑零改动;测试 +6(接管零接触/追加末尾/重复清理/外科补字段/JSONC 宽容/报废重建),1383/0 |
@@ -229,5 +244,6 @@ cppStandard 旧默认 gnu++17 → gnu++20(与 .clangd 对齐)。2026-09-15:env �
 <!-- 文件末尾修改时间:2026-10-14 23:20(c_cpp_properties 补写鲁棒化:ros2 白名单接管+外科手术+JSONC 宽容解析,详见演进简表/修改记录 23:20 行) -->
 <!-- 文件末尾修改时间:2026-10-14 23:50(标准字段收缩:生成三键/补写只动 includePath/废除强写强翻,详见演进简表/修改记录 23:50 行) -->
 <!-- 文件末尾修改时间:2026-10-15 00:40(认领落盘修复+串行+原子写+测试假绿根治,详见演进简表/修改记录 00:40 行) -->
+<!-- 文件末尾修改时间:2026-10-17(域门控:门槛绝对 && (门户‖倾向),handleIncludesChange 单点判定 + ide.allowEmptyWorkspace 新键 + SyncOutcome 反馈,详见语义要点 §0 / 演进简表 2026-10-17 行) -->
 <!-- 文件末尾修改时间:2026-09-16 01:30(目录 watcher 改工作区根条目松匹配 *:修"注册时 install/ 已存在→删了再建不报",详见上表 01:30 行) -->
 <!-- 文件末尾修改时间:2026-09-16 02:41(监听改造收口(方案 2)+ 勘误 + 文档同步,详见上表 02:41 行) -->

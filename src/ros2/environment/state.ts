@@ -5,7 +5,7 @@
  * @file state.ts
  * 实现 EnvironmentState 接口(api/environment-state.ts):环境状态唯一事实源
  * (需求 A2/A3/A4/A5):env / 防重入锁 / 变化事件 / 就绪门控。
- * 写路径(setEnv / notifyEnvChanged / setProcessingWorkspace / markReady)仅环境域内部调用,
+ * 写路径(setEnv / notifyEnvChanged / setProcessingWorkspace / markReady / markStale / clearStale)仅环境域内部调用,
  * 外部只读(getEnv / getEnvIssue / onEnvChanged / whenReady)。
  * 2026-08-31:isAvailable 重设计为 getEnvIssue(返回 string | null)——布尔判定 + 详细原因合一。
  * 取代旧 `extension.env` 公共状态与 `whenRosApiRefreshed` 门控。
@@ -16,6 +16,8 @@ import * as vscode from "vscode";
 import type { EnvironmentState } from "../api/environment-state";
 
 let env: any | undefined;              // 当前 env(source 结果)
+let staleReason: string | null = null; // 快照陈旧原因(最近一轮采集失败置入;成功采集清除;2026-10-18 P0 判据底座)
+let failureStreak = 0;                 // 连续采集失败计数(成功清零;仅供重载提示层读取,不参与关门判定;2026-10-18 P2)
 let processingWorkspace = false;       // 防重入锁(环境激活流程用)
 let ready = false;                     // 是否已完成至少一次 source
 let readyWaiters: Array<() => void> = [];
@@ -42,10 +44,18 @@ export function getEnv(): any | undefined {
  * ① env 缺失(未成功 source:脚本缺失 / 执行失败 / 返回空);
  * ② ROS_DISTRO 非已知 ROS 2 发行版名(如 jazzy);
  * ③ ROS_VERSION(主版本号 1/2)为空。
+ * 2026-10-18(P0 判据底座)新增:
+ * ④ 快照陈旧——env 存在但最近一轮采集失败时,不再沿用旧快照判"可用"
+ *   (旧口径的陈真链:失败保留旧快照 + 不发事件 ⇒ 失效环境被全部门永久放行),
+ *   而是返回陈旧原因关门;下一轮采集成功即自动恢复(边沿事件见 source.ts)。
+ *   rolling 维持名册外(2026-10-18 用户裁定:滚动版行为不可控,有意排除非缺陷)。
  */
 export function getEnvIssue(): string | null {
     if (!env) {
         return vscode.l10n.t("Environment not sourced successfully (script missing / execution failed / empty environment returned)");
+    }
+    if (staleReason !== null) {
+        return vscode.l10n.t("Environment snapshot is stale; last refresh failed: {0}", staleReason);
     }
     if (typeof env.ROS_DISTRO !== "string" || env.ROS_DISTRO.length === 0 || !KNOWN_ROS2_DISTROS.has(env.ROS_DISTRO)) {
         return vscode.l10n.t("ROS_DISTRO is not a known ROS 2 distribution: {0}", String(env.ROS_DISTRO));
@@ -96,6 +106,32 @@ export function setEnv(newEnv: any): void {
     env = newEnv;
 }
 
+/** 标记快照陈旧(仅 source 流程的采集失败出口调用;原因透出到 getEnvIssue ④ 分支) */
+export function markStale(reason: string): void {
+    staleReason = reason;
+}
+
+/** 清除快照陈旧标志(仅 source 流程的采集成功路径调用) */
+export function clearStale(): void {
+    staleReason = null;
+}
+
+/** 记录一次采集失败,返回连续失败次数(仅计数;关门判定由 markStale 独立承担,不受阈值影响;2026-10-18 P2) */
+export function recordCollectionFailure(): number {
+    failureStreak += 1;
+    return failureStreak;
+}
+
+/** 采集成功清零连续失败计数(与 clearStale 同点调用) */
+export function recordCollectionSuccess(): void {
+    failureStreak = 0;
+}
+
+/** 当前连续失败次数(重载提示层读取) */
+export function getFailureStreak(): number {
+    return failureStreak;
+}
+
 /** 环境变化通知(source 完成后广播) */
 export function notifyEnvChanged(): void {
     envChangedEmitter.fire();
@@ -127,6 +163,8 @@ export function markReady(): void {
 /** 【测试专用】重置到初始态 */
 export function _resetForTest(): void {
     env = undefined;
+    staleReason = null;
+    failureStreak = 0;
     processingWorkspace = false;
     ready = false;
     readyWaiters = [];

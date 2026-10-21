@@ -18,7 +18,7 @@ import { terminalRun } from "./commands/terminal-run";
 import { commandRunner } from "./environment/command-runner";
 import { monitorApi, setRos2ServiceApi } from "./consumers/monitor/monitor-api";
 import { setCommandRunner as setRos2ServiceCommandRunner } from "./commands/ros2_service_api";
-import { setParamHelperCommandRunner } from "./consumers/monitor/helper/param-helper-client";
+import { setParamHelperCommandRunner, setParamHelperEnvFacade } from "./consumers/monitor/helper/param-helper-client";
 
 import type { EnvironmentFacade } from "./api/environment-facade";
 import type { Ros2ServiceApi } from "./api/ros2-service-api";
@@ -59,6 +59,8 @@ setRos2ServiceApi(ros2ServiceApi);
 setRos2ServiceCommandRunner(commandRunner);
 // 注入:常驻参数助手客户端(2026-09-26,spawn 需自动注入 ROS env)
 setParamHelperCommandRunner(commandRunner);
+// 注入:常驻助手环境门面(P4:hello 指纹取 env + spawn 闸查 getEnvIssue;client 零 ros2 直连)
+setParamHelperEnvFacade(environmentFacade);
 
 // 装配入口注记(2026-08-26):REQUIREMENT-DRIVEN §4/§5 原设计组合根只被 EXT 调用;
 // 旧 composeExtension(context) 为零调用方死代码,已删除。当前装配 = 模块加载时

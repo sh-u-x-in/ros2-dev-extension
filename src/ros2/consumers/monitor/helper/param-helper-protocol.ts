@@ -4,9 +4,9 @@
 /**
  * @file param-helper-protocol.ts
  * 常驻助手协议的数据形状(2026-10-06 彻底推倒重来:信封帧协议,纯类型模块零依赖)。
- * 帧=一行 JSON;上行信封 {client,id,time,request{op,...}},下行信封 {service,time,cl-num}
- * + response|heartbeat|push 三选一。无版本握手(插件从未发布,无历史),无事件帧
- * (图全量推/参数订阅推/生命周期权威推);time=各自进程启动时刻(防 pid 复用杀错人)。
+ * 帧=一行 JSON;上行首帧=**hello 环境指纹握手**(P4:proto+ROS_VERSION/DISTRO/DOMAIN_ID/RMW,
+ * 服务端不匹配回 deny 并踢除),此后上行信封 {client,id,time,request{op,...}},下行信封
+ * {service,time,cl-num}+response|heartbeat|push 三选一。time=各自进程启动时刻(防 pid 复用杀错人)。
  * 协议事实源:assets/ros/彻底推倒重来.MD;服务端形状:param_helper_lib/server.py。
  */
 
@@ -16,7 +16,50 @@ export const HELPER_SOCKET_PATH = "/tmp/rde_param_helper.sock";
 /** 助手锁文件(pid/启动epoch/启动ticks;杀服务端前核对 ticks 防 pid 复用) */
 export const HELPER_LOCK_PATH = "/tmp/rde_param_helper.lock";
 
-/** 上行信封(客户端 → 服务端) */
+/** 协议版本(hello.proto;服务端不符即 deny) */
+export const HELPER_PROTO_VERSION = "rde-helper/1";
+
+/**
+ * 环境指纹键(大写全名)=服务端 kernel.HELPER_FINGERPRINT_KEYS 的镜像。
+ * **跨语言契约,不得手改**——helper-hello-contract 契约测试直接读 kernel.py 源码
+ * 提取键集逐字节对账,单侧改名即红。(2026-10-18 事故:客户端曾发短名键
+ * distro/domain_id/rmw,服务端按 key.lower() 取不到值归一 "0" ⇒ 恒 deny,
+ * 详见该套件的事故墓碑用例。)
+ */
+export const HELPER_FINGERPRINT_KEYS = ["ROS_VERSION", "ROS_DISTRO", "ROS_DOMAIN_ID", "RMW_IMPLEMENTATION"] as const;
+
+/** hello.env 的 wire 键 = 指纹键全小写(**派生**,禁手写——与服务端 key.lower() 口径恒等) */
+export type HelperHelloEnvKey = Lowercase<(typeof HELPER_FINGERPRINT_KEYS)[number]>;
+export const HELLO_ENV_KEYS: readonly HelperHelloEnvKey[] =
+    HELPER_FINGERPRINT_KEYS.map((k) => k.toLowerCase()) as readonly HelperHelloEnvKey[];
+
+/** hello 键 → 门面快照里的环境变量名(**派生**,恰为指纹键原形) */
+export const HELLO_ENV_SOURCES: Readonly<Record<HelperHelloEnvKey, (typeof HELPER_FINGERPRINT_KEYS)[number]>> =
+    Object.fromEntries(HELPER_FINGERPRINT_KEYS.map((k) => [k.toLowerCase(), k])) as Readonly<Record<HelperHelloEnvKey, (typeof HELPER_FINGERPRINT_KEYS)[number]>>;
+
+/** 客户端环境指纹(hello.env;键=HELLO_ENV_KEYS 四键必填,未设归一 "0") */
+export interface HelperHelloEnv {
+    ros_version: string;
+    ros_distro: string;
+    ros_domain_id: string;
+    rmw_implementation: string;
+}
+
+/** 上行首帧:hello 环境指纹握手(P4;服务端通过后 resync 照旧,不匹配回 deny 并踢除) */
+export interface HelperHelloFrame {
+    /** 客户端标签(扩展宿主 pid) */
+    client: string;
+    /** 序号(占位;hello 无响应,deny 走下行专用帧) */
+    id: number;
+    /** 客户端进程启动时刻 */
+    time: number;
+    hello: {
+        proto: string;
+        env: HelperHelloEnv;
+    };
+}
+
+/** 上行信封(客户端 → 服务端;hello 之后的业务帧) */
 export interface HelperRequestFrame {
     /** 客户端标签(扩展宿主 pid;服务端日志归因用) */
     client: string;
@@ -105,9 +148,16 @@ export type HelperPushPayload =
         node: string;
     } & HelperLifecycleInfo);
 
-/** 下行帧(三选一,靠键分流) */
+/** deny 帧(P4:hello 指纹不匹配/首帧违规;客户端收到即置失败态停连) */
+export interface HelperDenyFrame extends HelperEnvelope {
+    deny: {
+        reason: string;
+    };
+}
+
+/** 下行帧(靠键分流;deny 优先识别) */
 export type HelperInboundFrame =
-    HelperResponseFrame | HelperHeartbeatFrame | { push: HelperPushPayload };
+    HelperResponseFrame | HelperHeartbeatFrame | HelperDenyFrame | { push: HelperPushPayload };
 
 /** 图全量快照(resync 回应 data / graph push) */
 export interface HelperGraphSnapshot {

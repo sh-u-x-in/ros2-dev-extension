@@ -22,6 +22,7 @@ import { expandCommand, flattenArgList, mergeSpec, normalizeSpec, quoteShellArg,
 import { COLCON_BUILD_PRESETS, COLCON_BUILD_SPEC, axesFromArgv, colconBuildDynamics } from '../../src/build-tool/package-service/share/defaults/colcon-build';
 import { ROS2_RUN_SPEC } from '../../src/build-tool/package-service/share/defaults/ros2-run';
 import { ROS2_LAUNCH_SPEC } from '../../src/build-tool/package-service/share/defaults/ros2-launch';
+import { parsePresetsTable, serializePresetsTable } from '../../src/build-tool/package-service/share/presets-table';
 import type { CommandSpec } from '../../src/build-tool/package-service/share/types';
 import { installVscodeStub, vscodeStubWindow } from './_vscode-stub';
 
@@ -30,6 +31,8 @@ installVscodeStub();
 // pick-preset import vscode(纯 UI 壳)→ 无头环境先装 stub 再 require
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pickPreset = require('../../src/build-tool/package-service/share/pick-preset') as typeof import('../../src/build-tool/package-service/share/pick-preset');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const vsc = require('vscode') as typeof import('vscode');
 
 /** 简易 spec 构造(测展开语义用;接受只读预设表,内部复制一份) */
 function spec(
@@ -129,7 +132,7 @@ describe('expandCommand(占位符语义)', () => {
             'tool',
             '--log-level', 'debug',
             '--mid',
-            'log_command+',
+            '--event-handlers', 'console_cohesion+',
         ]);
     });
 
@@ -212,10 +215,10 @@ describe('normalizeSpec / mergeSpec(半成品设置与出厂默认的合并)', (
 });
 
 describe('出厂预设 = 详细输出的两半(不再有安装交叉预设)', () => {
-    it('只有两条:argv 与 描述 固定(第 2 条只给 handler 名,避免重复 flag)', () => {
+    it('只有两条:argv 与 描述 固定(第 2 条 = 整段 event-handlers 旗标,模板里已无字面量)', () => {
         assert.deepStrictEqual(COLCON_BUILD_PRESETS.map(p => p.argv), [
             '--log-level debug',
-            'log_command+',
+            '--event-handlers console_cohesion+',
         ]);
         assert.ok(COLCON_BUILD_PRESETS.every(p => p.describe.length > 0), '每条预设都要有描述(弹窗要显示)');
         assert.deepStrictEqual(
@@ -308,11 +311,10 @@ describe('命名动态参数清单(表驱动锁定:文档与实现不得漂移)'
     });
 });
 
-describe('默认 spec:与今天 toConcolBuild 的等价性(等价性锁定)', () => {
-    /** 今天普通模式的 argv = ["colcon", ...toConcolBuildCommand({...})](顺序照抄该函数) */
+describe('默认 spec:出厂定版形态(2026-10-21,等价性锁定)', () => {
+    /** 普通模式(不勾预设)的展开形态:无 --event-handlers(colcon 默认输出) */
     function todayNonVerboseArgv(flags: string[], packages: string[], clean: boolean): string[] {
         const args: string[] = ['build', ...flags];
-        args.push('--event-handlers', 'console_cohesion+');
         args.push('--base-paths', WS);
         if (packages.length > 0) {
             args.push('--packages-select', ...packages);
@@ -324,7 +326,7 @@ describe('默认 spec:与今天 toConcolBuild 的等价性(等价性锁定)', ()
         return ['colcon', ...args];
     }
 
-    it('两轴四种组合(不勾预设)→ 与今天的 argv 逐字节一致', () => {
+    it('两轴四种组合(不勾预设)→ 无 --event-handlers,其余形态锁定', () => {
         const combos: Array<[{ method: 'symlink' | 'copy'; layout: 'merged' | 'isolated' }, string[]]> = [
             [{ method: 'symlink', layout: 'merged' }, ['--symlink-install', '--merge-install']],
             [{ method: 'symlink', layout: 'isolated' }, ['--symlink-install']],
@@ -335,6 +337,7 @@ describe('默认 spec:与今天 toConcolBuild 的等价性(等价性锁定)', ()
             const dynamics = colconBuildDynamics({ base_path: WS, packages: ['a', 'b'], clean: true, install_type: axes });
             const r = expandCommand(COLCON_BUILD_SPEC, { dynamics });
             assert.deepStrictEqual(r.argv, todayNonVerboseArgv(flags, ['a', 'b'], true), `${axes.method}/${axes.layout} 不等价`);
+            assert.ok(!r.argv.includes('--event-handlers'), '不勾 2 号 ⇒ 命令里完全没有 --event-handlers');
             assert.deepStrictEqual(r.unknown, []);
         });
     });
@@ -347,10 +350,10 @@ describe('默认 spec:与今天 toConcolBuild 的等价性(等价性锁定)', ()
         assert.ok(!r.argv.includes('--cmake-clean-cache'));
     });
 
-    /** 今天详细模式的 argv = ["colcon", ...toConcolBuildCommand({verbose: true, ...})] */
+    /** 详细模式(勾两条预设)的展开形态:2 号 = 整段 --event-handlers console_cohesion+ */
     function todayVerboseArgv(flags: string[], packages: string[], clean: boolean): string[] {
         const args: string[] = ['--log-level', 'debug', 'build', ...flags];
-        args.push('--event-handlers', 'console_cohesion+', 'log_command+');
+        args.push('--event-handlers', 'console_cohesion+');
         args.push('--base-paths', WS);
         if (packages.length > 0) {
             args.push('--packages-select', ...packages);
@@ -362,7 +365,7 @@ describe('默认 spec:与今天 toConcolBuild 的等价性(等价性锁定)', ()
         return ['colcon', ...args];
     }
 
-    it('详细输出 = 勾上两条预设:与今天 verbose=true 的 argv **逐字节相同**(且只有一条 --event-handlers)', () => {
+    it('详细输出 = 勾上两条预设:形态锁定(且只有一条 --event-handlers)', () => {
         const dynamics = colconBuildDynamics({ base_path: WS, packages: ['a'], install_type: { method: 'symlink', layout: 'isolated' } });
         const r = expandCommand(COLCON_BUILD_SPEC, { dynamics, picked: [0, 1] });
         assert.deepStrictEqual(r.argv, todayVerboseArgv(['--symlink-install'], ['a'], false));
@@ -370,16 +373,16 @@ describe('默认 spec:与今天 toConcolBuild 的等价性(等价性锁定)', ()
         assert.deepStrictEqual(r.unknown, []);
     });
 
-    it('只勾第 1 条 = 只有 debug 日志;只勾第 2 条 = 只加 log_command+', () => {
+    it('只勾第 1 条 = 只有 debug 日志(无 event-handlers);只勾第 2 条 = 整段旗标出现', () => {
         const dynamics = colconBuildDynamics({ base_path: WS });
         const onlyLog = expandCommand(COLCON_BUILD_SPEC, { dynamics, picked: [0] }).argv;
         assert.deepStrictEqual(onlyLog.slice(0, 4), ['colcon', '--log-level', 'debug', 'build']);
-        assert.ok(onlyLog.includes('console_cohesion+') && !onlyLog.includes('log_command+'));
+        assert.ok(!onlyLog.includes('--event-handlers'), '模板无字面量 ⇒ 不勾 2 号就没有 event-handlers');
         const onlyCmd = expandCommand(COLCON_BUILD_SPEC, { dynamics, picked: [1] }).argv;
         assert.ok(!onlyCmd.includes('--log-level'));
         const handlers = onlyCmd[onlyCmd.indexOf('--event-handlers') + 1];
         assert.strictEqual(handlers, 'console_cohesion+');
-        assert.strictEqual(onlyCmd[onlyCmd.indexOf('--event-handlers') + 2], 'log_command+');
+        assert.ok(!onlyCmd.includes('log_command+'), '选项 2 已改整段旗标,不再有 handler 名');
     });
 
     it('默认模板**没有** ${0} ⇒ 传进来的自定义输入被忽略(功能保留但默认不使用)', () => {
@@ -439,6 +442,32 @@ describe('模板里没有 ${0} ⇒ 不弹「自定义输入」', () => {
         assert.strictEqual(withCustom[0].label, pickPreset.CUSTOM_ITEM_LABEL);
         assert.strictEqual(withCustom[0].isCustom, true);
     });
+
+    it('makePresetItems:factory 穿线 — 出厂条目走查册、只改 Value 的用户条目原样(l10n 换桩观察判定通道)', function () {
+        skipIfRealHost(this); // 换桩 l10n.t 仅无头可做(宿主 stub 故意不劫持)
+        const originalT: (message: string, ...args: unknown[]) => string = vsc.l10n.t;
+        (vsc.l10n as { t: typeof originalT }).t = (message: string): string =>
+            message === 'factory.build.presetDebugLog' ? '【查册命中1】' :
+            message === 'factory.build.presetConsoleCohesion' ? '【查册命中2】' :
+            message;
+        try {
+            const items = pickPreset.makePresetItems(COLCON_BUILD_SPEC, undefined, COLCON_BUILD_SPEC);
+            assert.strictEqual(items[0].label, '【查册命中1】', '出厂条目(同槽位+两字段相等)→ 查册译文');
+            assert.strictEqual(items[1].label, '【查册命中2】', '出厂条目 2 同上');
+            // 用户表:2 号条目只改 Value(argv 加了尾巴)→ 整条原样,不查册
+            const tweaked = pickPreset.makePresetItems({
+                ...COLCON_BUILD_SPEC,
+                argv_list: [
+                    { argv: COLCON_BUILD_PRESETS[0].argv, describe: COLCON_BUILD_PRESETS[0].describe },
+                    { argv: `${COLCON_BUILD_PRESETS[1].argv}L`, describe: COLCON_BUILD_PRESETS[1].describe },
+                ],
+            }, undefined, COLCON_BUILD_SPEC);
+            assert.strictEqual(tweaked[0].label, '【查册命中1】', '未动的 1 号仍是出厂');
+            assert.strictEqual(tweaked[1].label, COLCON_BUILD_PRESETS[1].describe, '只改 Value → 用户配置 → 原样(不进查册)');
+        } finally {
+            (vsc.l10n as { t: typeof originalT }).t = originalT;
+        }
+    });
 });
 
 /**
@@ -491,6 +520,28 @@ describe('二级弹窗的三种形态(可整个不要 / 只剩手动输入 / 多
         assert.deepStrictEqual(await pickPreset.pickPresets(inputOnlySpec, {}), { picked: [] });
         vscodeStubWindow.inputBoxResponses.push(undefined);
         assert.strictEqual(await pickPreset.pickPresets(inputOnlySpec, {}), undefined);
+    });
+
+    it('占位提示接线(2026-10-18 查表区收缩):placeHolder 来自 spec.customHint 经 factoryText;缺省 = 无占位', async () => {
+        // 桩 showInputBox 不回传 options → 本用例临时换装捕获器,记录 placeHolder 后返回空输入(流程即止)
+        const captured: Array<Record<string, unknown> | undefined> = [];
+        const stubWindow = vsc.window as { showInputBox?: unknown };
+        const original = stubWindow.showInputBox;
+        stubWindow.showInputBox = (async (opts: Record<string, unknown>) => {
+            captured.push(opts);
+            return '';
+        }) as (opts: Record<string, unknown>) => Promise<string | undefined>;
+        try {
+            // input-only 形态(模板只含 ${0}、无预设);factoryText 的命中/译文行为归 factory-l10n 套件
+            await pickPreset.pickPresets({ template: 'colcon build ${0}', custom: 'C', argv_list: [] } as CommandSpec, { title: 'T' });
+            assert.strictEqual(captured[0]?.placeHolder, undefined, '无 hint → 无占位(调用方铬已删除)');
+            await pickPreset.pickPresets({ template: 'colcon build ${0}', custom: 'C', customHint: 'USER HINT', argv_list: [] } as CommandSpec, { title: 'T' });
+            assert.strictEqual(String(captured[1]?.placeHolder), 'USER HINT', '用户提示原样透传(门卫未命中)');
+            await pickPreset.pickPresets({ template: 'colcon build ${0}', custom: 'C', customHint: '', argv_list: [] } as CommandSpec, { title: 'T' });
+            assert.strictEqual(captured[2]?.placeHolder, undefined, '空串 hint → 无占位');
+        } finally {
+            stubWindow.showInputBox = original;
+        }
     });
 
     it('list(默认模板):只勾预设 → 不弹输入框', async () => {
@@ -654,10 +705,9 @@ describe('槽内多条备选(组):展示全部、同组只应用书写顺序里�
 });
 
 describe('模板 = 字符串(设置侧唯一表示,2026-10-07 起拆除数组兼容)', () => {
-    it('出厂模板 = 历史自由文本(逐字节锁定,防默认命令漂移)', () => {
+    it('出厂模板 = 用户定版自由文本(逐字节锁定,防默认命令漂移;2026-10-21 去掉 event-handlers 字面量)', () => {
         assert.strictEqual(COLCON_BUILD_SPEC.template,
-            'colcon ${1} build ${install_method} ${install_layout} '
-            + '--event-handlers console_cohesion+ ${2} '
+            'colcon ${1} build ${install_method} ${install_layout} ${2} '
             + '--base-paths ${base_path} ${packages_select} ${clean} '
             + '--cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON');
         assert.strictEqual(ROS2_RUN_SPEC.template, 'ros2 run ${pkg} ${executable} ${0}');
@@ -679,25 +729,32 @@ describe('模板 = 字符串(设置侧唯一表示,2026-10-07 起拆除数组兼
     });
 });
 
-describe('package.json 预存默认与出厂 spec 同步(锁:两处默认不得漂移)', () => {
+describe('package.json 预存默认与出厂 spec 同步(锁:两处默认不得漂移;2026-10-17 两拆分后锁 template + presets 键值表)', () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')) as {
         contributes: { configuration: Array<{ properties: Record<string, { default?: unknown }> }> };
     };
     const props: Record<string, { default?: unknown }> = {};
     pkg.contributes.configuration.forEach(b => Object.assign(props, b.properties));
 
-    it('三命令的 default(template/custom/argv_list)与 defaults/*.ts 出厂值一致', () => {
-        const pairs: Array<[string, CommandSpec]> = [
-            ['ROS2.build.shareSpec', COLCON_BUILD_SPEC],
-            ['ROS2.run.shareSpec', ROS2_RUN_SPEC],
-            ['ROS2.launch.shareSpec', ROS2_LAUNCH_SPEC],
+    it('六键 default(template 串 / presets 键值表)与 defaults/*.ts 出厂值一致', () => {
+        const pairs: Array<[string, string, CommandSpec]> = [
+            ['ROS2.build.template', 'ROS2.build.presets', COLCON_BUILD_SPEC],
+            ['ROS2.tool.run.template', 'ROS2.tool.run.presets', ROS2_RUN_SPEC],
+            ['ROS2.tool.launch.template', 'ROS2.tool.launch.presets', ROS2_LAUNCH_SPEC],
         ];
-        for (const [key, factorySpec] of pairs) {
-            const d = props[key].default as CommandSpec;
-            assert.ok(d, `${key} 必须预存 default(设置面板直接可见可改)`);
-            assert.deepStrictEqual(d.template, factorySpec.template, `${key} template 漂移`);
-            assert.strictEqual(d.custom, factorySpec.custom, `${key} custom 漂移`);
-            assert.deepStrictEqual(d.argv_list, factorySpec.argv_list, `${key} argv_list 漂移`);
+        for (const [templateKey, presetsKey, factorySpec] of pairs) {
+            const dTemplate = props[templateKey].default as string;
+            const dPresets = props[presetsKey].default as Record<string, string>;
+            assert.ok(typeof dTemplate === 'string', `${templateKey} 必须预存 default(设置面板直接可见可改)`);
+            assert.ok(dPresets && !Array.isArray(dPresets), `${presetsKey} 必须预存 default 键值表`);
+            assert.strictEqual(dTemplate, factorySpec.template, `${templateKey} template 漂移`);
+            // 键值表 default = 出厂 spec 经同一序列化函数的产物(单一事实源仍是 defaults/*.ts)
+            assert.deepStrictEqual(dPresets, serializePresetsTable(factorySpec), `${presetsKey} 键值表漂移`);
+            // 往返性质:序列化产物 parse 回来 = 出厂 custom/customHint/argv_list(无空组形态,round-trip 成立)
+            const parsed = parsePresetsTable(dPresets)!;
+            assert.strictEqual(parsed.custom, factorySpec.custom, `${presetsKey} custom 往返漂移`);
+            assert.strictEqual(parsed.customHint, factorySpec.customHint, `${presetsKey} customHint 往返漂移`);
+            assert.deepStrictEqual(parsed.argv_list, factorySpec.argv_list, `${presetsKey} argv_list 往返漂移`);
         }
     });
 });

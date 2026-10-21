@@ -21,6 +21,7 @@
 
 | 时间(精确到分) | 说明 |
 |---|---|
+| 2026-10-18 16:13 | doctor/rosdep 设置键迁 `tool.` 层:注册层读取改 `tool.doctorCommand` / `tool.rosdepCommand`(执行层零改动;ros_task_runner.toDoctorCommand 兜底同批增 `--report` 对齐 manifest 默认) |
 | 2026-09-29 | 文档同步:terminal.ts 行删 GetDebugSettings(2026-09-22 随调试链路删除,当时漏改);lifecycle.ts 行改「已删除」(墓碑于 2026-09-29 零引用清理物理删除) |
 | 2026-08-28 12:52 | 创建 registry/ README(命令注册层/文件清单) |
 | 2026-08-28 12:56 | 时间标注统一精确到时分;尾部新增修改记录便于溯源。正文引用的历史日期(2026-08-24 ~ 2026-08-26)为设计/代码注释标注日期,非文件操作时间 |

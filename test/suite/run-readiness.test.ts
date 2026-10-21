@@ -95,12 +95,119 @@ describe("陈旧附加警告纯函数(2026-10-13:附加不阻碍/状态栏 4 秒
         assert.ok(typeof rds.STALE_MUTE_LABEL === "string" && rds.STALE_MUTE_LABEL.length > 0, "静音按钮标签应为非空串");
     });
 
-    it("键名锁:ROS2.run.staleWarning(照 preflight 键名锁先例)", () => {
-        assert.strictEqual(rds.RUN_STALE_WARNING_SETTING, "run.staleWarning");
+    it("键名锁:ROS2.tool.run.staleWarning(照 preflight 键名锁先例)", () => {
+        assert.strictEqual(rds.RUN_STALE_WARNING_SETTING, "tool.run.staleWarning");
     });
 
     it("notifyStaleIfNeeded 静默路径不抛错(源/安装缺一 = 不警;无头 stub 下不触达气泡 API)", () => {
         assert.doesNotThrow(() => rds.notifyStaleIfNeeded("run", "p", "n", undefined, undefined));
         assert.doesNotThrow(() => rds.notifyStaleIfNeeded("launch", "p", "n", undefined, undefined));
+    });
+});
+
+describe("陈旧比对落点选择(2026-10-16 误报修复:devDir 目录类别名永不参与比对)", () => {
+    const cppEntry = (over: Record<string, unknown> = {}) => ({
+        pkg: "p", name: "node", kind: "cpp",
+        installPath: "/ws/install/p/lib/p/node", installPaths: undefined, ...over,
+    });
+    const pyEntry = (over: Record<string, unknown> = {}) => ({
+        pkg: "p", name: "script_py", kind: "console_script",
+        installPath: "", installPaths: ["/ws/build/p", "/ws/install/p/lib/p/script_py"],
+        pythonInstall: { devDir: "/ws/build/p", verified: false },
+        ...over,
+    });
+
+    it("entry 缺失 → undefined", () => {
+        assert.strictEqual(rds.staleInstallTargetOf(undefined), undefined);
+    });
+
+    it("cpp(无 pythonInstall):installPath 优先;为空走 installPaths[0](原口径不变)", () => {
+        assert.strictEqual(rds.staleInstallTargetOf(cppEntry()), "/ws/install/p/lib/p/node");
+        assert.strictEqual(
+            rds.staleInstallTargetOf(cppEntry({ installPath: "", installPaths: ["/ws/install/p/lib/p/node"] })),
+            "/ws/install/p/lib/p/node"
+        );
+    });
+
+    it("python 清单实证(verified=true,copy 安装)→ 照常给 installPath", () => {
+        assert.strictEqual(
+            rds.staleInstallTargetOf(pyEntry({ installPath: "/ws/install/p/lib/p/script_py", pythonInstall: { verified: true } })),
+            "/ws/install/p/lib/p/script_py"
+        );
+    });
+
+    it("性质钉:python 无清单实证(verified=false,ament_python develop 语义)→ undefined", () => {
+        assert.strictEqual(
+            rds.staleInstallTargetOf(pyEntry()),
+            undefined,
+            "2026-10-16 误报真因:installPaths[0] 字母序恒为 devDir(build/<pkg> 目录),目录 mtime 冻结建包时刻,绝不可参与比对"
+        );
+        assert.strictEqual(rds.staleInstallTargetOf(pyEntry({ pythonInstall: { verified: false, devDir: "/ws/build/p" } })), undefined);
+    });
+
+    it("pythonInstall 存在但缺 verified 字段(畸形)→ 按 false 处理(保守不警)", () => {
+        assert.strictEqual(rds.staleInstallTargetOf(pyEntry({ pythonInstall: { devDir: "/ws/build/p" } })), undefined);
+    });
+});
+
+describe("陈旧警告触发链(2026-10-16:isFile 门绊线 + 正路径恰弹一次)", () => {
+    const fs = req("fs");
+    const os = req("os");
+    const path = req("path");
+    const vscodeMod = req("vscode") as { window: Record<string, unknown> };
+    const calls: Array<unknown[]> = [];
+    let patched = false;
+    let original: unknown;
+    let dir = "";
+    let src = "";
+    let installFile = "";
+
+    before(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), "rds-stale-"));
+        src = path.join(dir, "node.py");
+        installFile = path.join(dir, "node");
+        fs.writeFileSync(src, "x");
+        fs.writeFileSync(installFile, "x");
+        // 正路径素材:安装文件旧于源;绊线素材:目录 mtime 拨到过去(无门时 isStale 必真)
+        const old = new Date(Date.now() - 60_000);
+        fs.utimesSync(installFile, old, old);
+        fs.utimesSync(dir, new Date(2020, 0, 1), new Date(2020, 0, 1));
+        try {
+            original = vscodeMod.window.showWarningMessage;
+            vscodeMod.window.showWarningMessage = (...args: unknown[]) => {
+                calls.push(args);
+                return Promise.resolve(undefined);
+            };
+            patched = true;
+        } catch {
+            // 真宿主 window 不可写:正路径用例自行跳过(headless 单文件为主跑口径)
+        }
+    });
+
+    after(() => {
+        if (patched) {
+            vscodeMod.window.showWarningMessage = original;
+        }
+        try {
+            fs.rmSync(dir, { recursive: true, force: true });
+        } catch {
+            // 临时目录清理失败无害
+        }
+    });
+
+    it("绊线:installPath 是目录(误报形态)→ isFile 门使其静默不抛(无门则无头撞缺失的气泡 API 必炸)", () => {
+        assert.doesNotThrow(() => rds.notifyStaleIfNeeded("run", "stale_tripwire_pkg", "n", src, dir));
+    });
+
+    it("正路径:真实文件安装落点旧于源 → 恰弹 1 次(消息含目标名);30 秒冷却内不重弹", function () {
+        if (!patched) {
+            this.skip();
+        }
+        calls.length = 0;
+        rds.notifyStaleIfNeeded("run", "stale_pos_pkg", "n", src, installFile);
+        assert.strictEqual(calls.length, 1, "源 > 真实文件安装落点 = 恰弹一次");
+        assert.ok(String(calls[0][0]).indexOf("stale_pos_pkg/n") >= 0, "消息应含目标名(pkg/name)");
+        rds.notifyStaleIfNeeded("run", "stale_pos_pkg", "n", src, installFile);
+        assert.strictEqual(calls.length, 1, "30 秒同目标冷却内不重弹");
     });
 });

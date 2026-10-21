@@ -10,6 +10,7 @@
 
 | 目录/文件 | 职责 |
 |:--|:--|
+| 2026-10-18 (P2) | **start 化**:providers 删立即 `watcher.start()`+`pkg.initialize().then(graph.build)`;注册返回 `{disposables, start}`(enabled 谓词门关空转);排除配置监听/诊断 scheduleRefresh+初始检查挂 isStarted 门;新增打开 .xacro/.urdf 文档惰性启动;入口=编排层 reconcile + 首次打开文档 |
 | index.ts | 域唯一出口:registerXacroProviders + Xacro* 提供器类 + extractLeadingComment |
 | core/ | include-graph.ts(图核心:三阶段 build/增量/可见性/use-def/环检测/兜底单飞分片;XG5 起解析走 parse/xacro-document 单遍模型 + uri+version 缓存;XG10 边模型 ns/optional/isGlob + glob 本地枚举 + ${} 代换扩展)、xacro-watcher.ts(监听/rename/轮巡/事件驱动) |
 | parse/ | xacro-lexer.ts(XG1 $ 层词法:官方 LEXER 四态+issue)· macro-params.ts(XG2 params 全语法)· expression-tokens.ts(XG3 ${} 分词+refIdents)· xacro-tags.ts(XG4 固定标签/属性签名/SUBST_COMMANDS/EVAL_GLOBALS/XACRO_KEYWORDS 单源)· xacro-document.ts(XG4 单遍解析+XacroDocumentStore 缓存)· context-locator.ts(光标上下文;XG6 拆树参数核心) |
@@ -43,6 +44,7 @@ include-graph.test / xacro-completion.test(含 XG7)/ xacro-diagnostics.test / xa
 
 | 时间(精确到分钟) | 说明 |
 |:--|:--|
+| 2026-10-18 05:12 | **用户排除后剪枝 + 超时警告(用户裁定,随查表区收缩批移交)**:include-graph build/fallback 结果后过滤(path-exclude normalize 出口)+ **watcher flush upsert 双判门**(内置产物目录段 + 用户路径——顺带修增量连内置名都不判、build/install 新增 .xacro 入图的附带瑕疵;remove 恒放行)+ build/fallback 读 timedOut 打 warn(原超时静默产出残图);providers 接 excludeFolders 变化 → graph.build 重建 |
 | 2026-09-03 23:11 | 建档(信息独立):xacro 模块结构 README——文件职责、装配链与事件驱动、已知问题(X-F1 断链等)、测试;关联 03-xacro模块审计.md |
 | 2026-09-04 01:05 | X-F1 修复(刷新断链):extension 直挂 packageCore.onDidChange(workspace 域变化 → xacroPackages.refreshWorkspace),setPackageMapRefresher 死机制移除;见 package-map.md §2.1 |
 | 2026-09-06 23:01 | 用户反馈批次(跳转体验):① D5「变量未找到」Hint 三点标在 `${` 下 → 改标变量标识符本身(name 首字母至末字母);② 宏体内引用自身 params 形参(${name} 等)不再误报 D5——新增 parseMacroParams/collectMacroParamSpans/isMacroParamRef 纯函数(诊断模块导出,可测);③ DocumentLink 宏下划线统一:同文件"定义在前"的宏调用也产出可点击链接(原固定 (0,0) 位置致同文件宏永不落链接);④ Hover 悬浮框带出定义上方紧邻 `<!-- -->` 文档注释(extractLeadingComment);新增 xacro-providers.test.ts;见 03 审计修改记录 |

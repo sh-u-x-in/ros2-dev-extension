@@ -7,6 +7,7 @@
 
 | 层/文件 | 职责 | 依赖 |
 |---|---|---|
+| 2026-10-18 | **统一环境门 GateService(P1)**:gate.ts 升格为公式唯一载体——shouldRegisterBuildTaskProvider 布尔式升格 evaluateGateDecision(返回 {allowed, reason: env\|packages}),新增 createGateService(三 getter 实时求值不缓存);类型出口 api/api.ts(GateDecision/GateService/GateServiceOptions,经 api/index 聚合);createBuildTaskProviderGate.sync 改走同式;PackageGate(包数翻转纯状态)零引用物理删除。消费方:构建任务提供器注册(本域)+ 配置生成域(config/gen 经 api 注入同一服务,组合根 extension.ts 建 sharedGate 装配);倾向键随统一键更名 env.allowEmptyWorkspace(默认关) |
 | `api/` | 对外唯一依赖点:类型层 + 运行时出口(≈ros2/api/) | 仅类型依赖(import type) |
 | `compose.ts` | 组合根:createPackageCore 工厂 + 装配 + 门面实现(≈ros2/compose.ts) | 各实现模块(单向)+ vscode + ros2/api(执行口) |
 | `gate.ts` | 门控编排(门槛 && 门户 && 倾向 + 任务提供器注册) | vscode(仅 import type) |
@@ -70,6 +71,7 @@ package-core 零命令执行、不 import ros2/ 实现。
 
 | 文件 | 行数 | 废弃日期 | 去向 / 说明 | 复核 |
 |:--|:--|:--|:--|:--|
+| 2026-10-18 | **P2 start 化(构造≠启动)**:PackageFetcher 契约+start()(event/contracts);event/index timer/watcher 延迟创建(currentIntervalMs 暂存 reconfigure 先达;started/disposed 守卫;dispose 空守卫容忍未 start);data/index 删构造期 `void forceRefresh()` 首载,加幂等 start()(forceRefresh 带 catch);compose PackageCore 接口+start()=fetcher.start→data.start(顺序防漏事件)。编排层按环境门调用(extension 阶段 B);门关=零 timer/零 watcher/零扫描 |
 | data/config-gen.ts | 191 | 2026-08-29 | 实现迁 package-service/config/gen(intellisense-config) | 2026-09-03 维持 |
 | cache/package-cache.ts | 386 | 2026-08-29 | 新实现 = data/package-cache.ts(cache/ 吸收进 data/) | 2026-09-29 物理删除(零引用清理,提交 8afde4a) |
 | data/validate.ts | 52 | 2026-08-29 | 校验职能并入 scan/package-xml + cache 内建 | 2026-09-03 维持 |

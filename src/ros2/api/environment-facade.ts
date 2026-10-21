@@ -33,12 +33,12 @@ export interface EnvironmentFacade {
     onBuildSignal(listener: () => void): vscode.Disposable;
 
     // ── 编排 ──
-    /** 完整激活(启动):刷新 env + 无条件组件重装配 */
+    /** 完整激活(启动):刷新 env + 幂等组件对账(2026-10-18 P2:装配改 reconcile 幂等 desired-state) */
     activateEnvironment(context: vscode.ExtensionContext): Promise<void>;
-    /** 轻量刷新:source + context key + 门控 + 可用性/包数翻转检测(true=已触发重装配) */
+    /** 轻量刷新:source + context key + 组件对账(true=本次 reconcile 实际动手;P2 传感器统一入口) */
     refreshEnvironment(context: vscode.ExtensionContext): Promise<boolean>;
-    /** 构建后刷新(环境采集流水线 + compile_commands 合并;2026-09-15 语义升级) */
-    refreshAfterBuild(): void;
+    /** 构建后刷新(全量环境刷新 + compile_commands 合并;2026-10-18 P2 改签名并走全量刷新) */
+    refreshAfterBuild(context: vscode.ExtensionContext, workspaceRoot?: string): Promise<void>;
     // 2026-08-28 门控编排已移入 package-core/gate.ts:
     //   syncPackagesState(包变化同步)与 syncBuildTaskProvider(任务提供器注册)不再属于环境域,
     //   由上层编排者订阅 package-core.onDidChange 门控事件执行。

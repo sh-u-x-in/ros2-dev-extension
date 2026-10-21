@@ -10,8 +10,8 @@
  *  · `picked` = 勾选的预设下标(0 基;读取时过滤非法项、去重、升序);
  *  · `custom` = 自定义输入的**完整原文**(不 trim、不截断 —— 下次原样回填输入框)。
  *
- * ── 存储(复用工作区状态文件)──────────────────────────────────────
- * 写进 `.vscode/ros2-dev-extension-state.json` 的 `selectionMemory` 字段,形状是"命令 id → 记忆":
+ * ── 存储(扩展私有存储内的状态文件,2026-10-21「转入地下」)──────────────
+ * 写进状态文件的 `selectionMemory` 字段,形状是"命令 id → 记忆":
  * ```json
  * { "selectionMemory": { "colcon.build": { "picked": [0, 1], "custom": "--force" } } }
  * ```
@@ -72,16 +72,16 @@ function readMemoryMap(data: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** 读一条命令的选择记忆(读不到 → 空记忆) */
-export async function readSelectionMemory(workspaceRoot: string, commandId: string): Promise<SelectionMemory> {
-    const data = await readStateFile(workspaceRoot);
+export async function readSelectionMemory(commandId: string): Promise<SelectionMemory> {
+    const data = await readStateFile();
     const memory = normalizeSelectionMemory(readMemoryMap(data)[commandId]);
     log.debug(l10n.t("Selection memory read [{0}]: presets [{1}]{2}", commandId, memory.picked.join(","), memory.custom.length > 0 ? l10n.t(" + custom input") : ""));
     return memory;
 }
 
 /** 读全部命令的记忆(诊断/调试用;形状已归一化) */
-export async function readAllSelectionMemory(workspaceRoot: string): Promise<Record<string, SelectionMemory>> {
-    const data = await readStateFile(workspaceRoot);
+export async function readAllSelectionMemory(): Promise<Record<string, SelectionMemory>> {
+    const data = await readStateFile();
     const out: Record<string, SelectionMemory> = {};
     for (const [commandId, raw] of Object.entries(readMemoryMap(data))) {
         out[commandId] = normalizeSelectionMemory(raw);
@@ -94,12 +94,11 @@ export async function readAllSelectionMemory(workspaceRoot: string): Promise<Rec
  * 写失败静默降级(由 state-file 层保证)。
  */
 export async function writeSelectionMemory(
-    workspaceRoot: string,
     commandId: string,
     memory: SelectionMemory,
 ): Promise<void> {
     const normalized = normalizeSelectionMemory(memory);
-    await updateStateFile(workspaceRoot, (draft) => {
+    await updateStateFile((draft) => {
         const map = readMemoryMap(draft);
         map[commandId] = normalized;
         draft[SELECTION_MEMORY_FIELD] = map;

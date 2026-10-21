@@ -185,8 +185,13 @@ export function closingEdgeLine(
 
 /**
  * 注册 xacro 诊断(D1-D14)。返回一次性 Disposable(集合 + 订阅)。
+ * P2 start 化:可选 isStarted 谓词——图未建(门关)时诊断调度与初始检查一律跳过。
  */
-export function registerXacroDiagnostics(graph: IncludeGraph, packages: PackageMap): vscode.Disposable {
+export function registerXacroDiagnostics(
+    graph: IncludeGraph,
+    packages: PackageMap,
+    isStarted?: () => boolean
+): vscode.Disposable {
     const collection = vscode.languages.createDiagnosticCollection("xacro");
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -496,6 +501,9 @@ export function registerXacroDiagnostics(graph: IncludeGraph, packages: PackageM
     //  - 非激活文档不主动整文计算,避免一口气打开多个文件时按打开顺序堆叠解析;
     //  - 已在跑的 refresh 是分片异步:每片让出并检查激活,切走即中断(见 refresh/runChunked)。
     const scheduleRefresh = (doc: vscode.TextDocument): void => {
+        if (isStarted && !isStarted()) {
+            return; // P2:图未建(门关)不做诊断调度
+        }
         const key = doc.uri.toString();
         const old = timers.get(key);
         if (old) {
@@ -587,10 +595,13 @@ export function registerXacroDiagnostics(graph: IncludeGraph, packages: PackageM
     });
 
     // D7:启动检查;初始只算当前激活文档(其余在激活时自然排算,2026-09-07)
+    // P2:仅图已建时做初始检查;未建由启动链(start 内 build 完成后)的激活事件自然排算
     logEnvStatus();
-    const act0 = activeDoc();
-    if (act0) {
-        scheduleRefresh(act0);
+    if (!isStarted || isStarted()) {
+        const act0 = activeDoc();
+        if (act0) {
+            scheduleRefresh(act0);
+        }
     }
 
     log.info("xacro 诊断已注册:D1 悬垂 / D2 包未找到 / D3 环 / D4 可见性 / D5 变量 / D6 依赖环 / D7 环境 / D8-D14 语法级(XG9)");

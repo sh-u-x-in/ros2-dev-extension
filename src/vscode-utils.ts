@@ -11,13 +11,8 @@ import * as net from 'net';
 import { getLogger } from "./logger";
 
 // walk 层统一导入口(2026-08-30:排除工具/常量/配置归 walk,经 index barrel 对外;统一入口 walkOptions 读设置在 walk-options.ts)
-import {
-    WALK_FOLLOW_SYMLINKS_DEFAULT,
-    getWalkTimeoutConfig,
-    WalkSearchType,
-    WalkTimeoutConfig,
-    WalkTimeoutOverride,
-} from "./build-tool/walk";
+// 2026-10-18 平铺批:readWalkTimeoutConfig 迁往 walk-options(兑现"读设置仅此处一处"),本文件仅留 followSymlinks 读取
+import { WALK_FOLLOW_SYMLINKS_DEFAULT } from "./build-tool/walk";
 import {
     checkExternallyManagedEnvironment,
     getPackageInfo as commonGetPackageInfo,
@@ -25,7 +20,6 @@ import {
     isCppToolsExtensionInstalled as commonIsCppToolsInstalled,
     isPythonExtensionInstalled as commonIsPythonInstalled,
     isCursorEditor as commonIsCursorEditor,
-    showOutputPanelIfConfigured,
     IPackageInfo as CommonIPackageInfo
 } from "@ranchhandrobotics/rde-common";
 
@@ -48,24 +42,12 @@ export function readFollowSymlinksSetting(): boolean {
 }
 
 /**
- * 读取统一搜索超时/深度配置(ROS2.search.walkTimeouts 数组覆盖;未配置项用内置默认)。
- * 设置优先于内置默认(walk-config.ts),各搜索点按类型取最终配置(每次现读,设置变化即时生效,无需失效缓存)。
+ * 读取统一搜索超时/深度配置的旧入口已于 2026-10-18 平铺批迁往 walk-options.readWalkTimeoutConfig
+ * (12 键 ROS2.search.walkTimeout.<type>.<field>;详见 walk-options.ts)。
  */
-export function readWalkTimeoutConfig(type: WalkSearchType): WalkTimeoutConfig {
-    const userOverrides = getExtensionConfiguration().get<WalkTimeoutOverride[]>("search.walkTimeouts", []);
-    return getWalkTimeoutConfig(type, userOverrides);
-}
 
 export function createOutputChannel(): vscode.LogOutputChannel {
     return vscode.window.createOutputChannel("ROS 2", { log: true });
-}
-
-/**
- * Shows the output panel if ui.autoShowOutput is enabled (default: true).
- * @param outputChannel The output channel to show
- */
-export function showOutputPanel(outputChannel: vscode.OutputChannel): void {
-    showOutputPanelIfConfigured(outputChannel, "ROS2", "ui.autoShowOutput");
 }
 
 /**

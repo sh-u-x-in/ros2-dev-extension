@@ -25,6 +25,7 @@ import { getLogger } from "../../../logger";
 import { PackageMap } from "../../shared/package-map";
 // walk 统一入口:读设置/默认排除/叠加额外排除由 walkOptions 一处装配(walk/index barrel)
 import { walkOptions, walkWithTimeout } from "../../../build-tool/walk";
+import { isPathExcludedNormalized, resolveExcludeFoldersNormalized } from "../../../build-tool/walk/base/path-exclude";
 // XG5(2026-09-24):解析统一走 parse/xacro-document 单遍模型 + uri+version 缓存(修 X-F4/X-F3)
 import { parseXacroDocument, XacroDocumentStore, staticBoolean } from "../parse/xacro-document";
 import type { XacroDocument } from "../parse/xacro-document";
@@ -234,7 +235,16 @@ export class IncludeGraph {
                     list = [];
                 } else {
                     const result = await walkWithTimeout(wsRoot, /\.(xacro|urdf)$/, walkOptions("xacro"));
-                    list = result.matches.map((p) => vscode.Uri.file(p));
+                    if (result.timedOut) {
+                        // 超时警告(2026-10-18 后剪枝批移交项):与 message/test 同款,不再静默产出残图
+                        log.warn(vscode.l10n.t("xacro file scan timed out; the include graph may be incomplete"));
+                    }
+                    // 用户排除后剪枝(2026-10-18 后剪枝批):内置名已在 walk 遍历期剪枝,此处补用户路径级过滤
+                    const excluded = resolveExcludeFoldersNormalized(
+                        wsRoot,
+                        vscode.workspace.getConfiguration("ROS2").get<string[]>("search.excludeFolders", []),
+                    );
+                    list = result.matches.filter((p) => !isPathExcludedNormalized(p, excluded)).map((p) => vscode.Uri.file(p));
                 }
             } catch (err) {
                 log.warn(vscode.l10n.t("xacro file scan failed: {0}", (err as Error).message));
@@ -521,7 +531,15 @@ export class IncludeGraph {
                 const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
                 if (wsRoot) {
                     const result = await walkWithTimeout(wsRoot, /\.(xacro|urdf)$/, walkOptions("xacro"));
-                    candidates = result.matches.map((p) => vscode.Uri.file(p));
+                    if (result.timedOut) {
+                        log.warn(vscode.l10n.t("xacro file scan timed out; the include graph may be incomplete"));
+                    }
+                    // 用户排除后剪枝(2026-10-18 后剪枝批):与 build 阶段同一口径
+                    const excluded = resolveExcludeFoldersNormalized(
+                        wsRoot,
+                        vscode.workspace.getConfiguration("ROS2").get<string[]>("search.excludeFolders", []),
+                    );
+                    candidates = result.matches.filter((p) => !isPathExcludedNormalized(p, excluded)).map((p) => vscode.Uri.file(p));
                 }
             } catch (err) {
                 log.warn(vscode.l10n.t("Fallback reverse-search scan failed: {0}", (err as Error).message));

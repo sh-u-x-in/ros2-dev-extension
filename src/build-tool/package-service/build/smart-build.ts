@@ -28,10 +28,12 @@ import { warnInstallLayoutMismatch } from "./install-layout-check";
 import { showInstallMethodWarning } from "./preflight-warnings";
 import { resolveInstallType } from "./install-type";
 import { expandColconBuild, readColconBuildSpec } from "./share-spec";
+import { colconMissingHint, findColconOnPath } from "./colcon-check";
 import { pickPresets } from "../share/pick-preset";
-import { COLCON_BUILD_COMMAND_ID } from "../share/defaults/colcon-build";
+import { COLCON_BUILD_COMMAND_ID, COLCON_BUILD_SPEC } from "../share/defaults/colcon-build";
 import { readSelectionMemory, writeSelectionMemory } from "../share/selection-memory";
 import { composeApi } from "../../../ros2/api";
+import { environmentState } from "../../../ros2/environment";
 import type { BuildDataSource } from "./data-source";
 
 /** 扩展日志薄封装(带 smart-build 模块前缀) */
@@ -40,11 +42,11 @@ const log = getLogger("smart-build");
 /**
  * 构建 ROS 2 包:两级选择(多选包 → 参数多选/自定义输入)→ 执行 colcon build。
  * 包列表走缓存(命中即返回,未命中才现场 colcon list 兜底),记忆上次选择
- * (文件落盘 .vscode/ros2-dev-extension-state.json)用于默认预选。
+ * (落扩展私有存储的状态文件,2026-10-21 起不再在工作区 .vscode/ 下)用于默认预选。
  * 2026-08-31(#8):空构建与有包分支合并——空构建 = 包列表为空的特例(弹窗仍显示空列表让用户直观看到无包)。
  */
 export async function runColconBuild(data: BuildDataSource | null): Promise<void> {
-    log.trace("Smart build: runColconBuild entry");
+    log.trace(vscode.l10n.t("Smart build: runColconBuild entry"));
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
         log.error("No workspace folder found; cannot build");
@@ -57,11 +59,32 @@ export async function runColconBuild(data: BuildDataSource | null): Promise<void
         return;
     }
 
+    // 域门早退(2026-10-17,用户裁定"键位保持穿透 + 面板命令早退拒绝"):无可用 ROS 2 环境时第一句拒绝,
+    // 不让用户陪跑包多选/参数选择两轮弹窗;文案与 ros_task_runner.colcon_build 终点门槛同键(双语已在册,
+    // 终点检查保留 = 双保险)。环境可用性翻转即时反映:onDidChangeEnv 已接线 refreshContextKeys/实时读。
+    const envIssue = environmentState.getEnvIssue();
+    if (envIssue !== null) {
+        log.info("Smart build refused at entry: no usable ROS 2 environment");
+        vscode.window.showErrorMessage(vscode.l10n.t(
+            "No usable ROS 2 environment detected; cannot build. Reason: {0}. Configure and activate a ROS environment (ROS2.rosSetupScript / ROS2.pixiRoot) first, then retry.",
+            envIssue));
+        return;
+    }
+
+    // colcon 构建前检查(2026-10-20):desktop 不带 colcon,新装机器常缺——入口第一句拒绝
+    // 带安装指引,不让用户陪跑两级选择弹窗后在终端吃裸 127。探测零子进程(环境快照 PATH)。
+    if (findColconOnPath() === null) {
+        log.info("Smart build refused at entry: colcon not found on the environment PATH");
+        vscode.window.showErrorMessage(colconMissingHint());
+        return;
+    }
+
     // ① 获取工作区包列表 + 空构建策略判定(空构建 = 包列表为空的特例,统一流程)
+    // 2026-10-18(P1 倾向键合一):统一读 ROS2.env.allowEmptyWorkspace(默认关)——空工作区默认拒绝
     const rosConfig = vscode.workspace.getConfiguration("ROS2");
     const packages = await data.getBuildPackages();
     log.debug(vscode.l10n.t("Fetched {0} workspace packages", packages.length));
-    if (packages.length === 0 && !rosConfig.get<boolean>("build.allowEmptyWorkspace", true)) {
+    if (packages.length === 0 && !rosConfig.get<boolean>("env.allowEmptyWorkspace", false)) {
         log.info("No ROS 2 packages and empty builds not allowed; build refused");
         // 二级动作按钮(2026-10-04 i18n 期0):显示与返回值判定同源常量(见 install-truth-sidebar 同款注释)
         const BTN_ALLOW_EMPTY_BUILD = vscode.l10n.t("Allow empty builds in Settings");
@@ -70,17 +93,17 @@ export async function runColconBuild(data: BuildDataSource | null): Promise<void
             BTN_ALLOW_EMPTY_BUILD
         );
         if (action === BTN_ALLOW_EMPTY_BUILD) {
-            await vscode.commands.executeCommand("workbench.action.openSettings", "ROS2.build.allowEmptyWorkspace");
+            await vscode.commands.executeCommand("workbench.action.openSettings", "ROS2.env.allowEmptyWorkspace");
         }
         return;
     }
     if (packages.length === 0) {
-        log.debug("No packages; entering empty-build flow (empty package list special case)");
+        log.debug(vscode.l10n.t("No packages; entering empty-build flow (empty package list special case)"));
     }
 
     // ② 读取记忆(文件落盘):包选择走 build-memory;二级参数选择走通用选择记忆(share/selection-memory)
-    const state = await buildMemory.readBuildState(workspaceRoot);
-    const memory = await readSelectionMemory(workspaceRoot, COLCON_BUILD_COMMAND_ID);
+    const state = await buildMemory.readBuildState();
+    const memory = await readSelectionMemory(COLCON_BUILD_COMMAND_ID);
     log.debug(vscode.l10n.t("Memory read: presets [{0}] / {1} packages remembered", memory.picked.join(","), state.buildPackages.length));
 
     // 第 1 步:多选包(空构建时列表为空,弹窗让用户直观看到无包,回车继续)
@@ -98,7 +121,7 @@ export async function runColconBuild(data: BuildDataSource | null): Promise<void
         placeHolder: packages.length === 0 ? vscode.l10n.t("No ROS 2 packages in the workspace; press Enter to continue") : vscode.l10n.t("Select packages to build (all selected by default; uncheck to exclude)"),
     });
     if (!selected) {
-        log.trace("User cancelled at package selection");
+        log.trace(vscode.l10n.t("User cancelled at package selection"));
         return; // 用户取消
     }
     const selectedPackages = selected.map(s => s.label);
@@ -121,12 +144,12 @@ export async function runColconBuild(data: BuildDataSource | null): Promise<void
         title: vscode.l10n.t("Build ROS 2 Packages - Select Arguments"),
         placeholder: vscode.l10n.t("Check arguments to append (multi-select; leave unchecked to use template defaults)"),
         customTitle: vscode.l10n.t("Build ROS 2 Packages - Custom Input"),
-        customPlaceholder: vscode.l10n.t("e.g. --continue-on-error --cmake-args -DCMAKE_BUILD_TYPE=Debug"),
         customValue: memory.custom,
         remembered: { picked: memory.picked, custom: memory.custom.length > 0 },
+        factory: COLCON_BUILD_SPEC,
     });
     if (!pick) {
-        log.trace("User cancelled at argument selection");
+        log.trace(vscode.l10n.t("User cancelled at argument selection"));
         return;
     }
     log.debug(vscode.l10n.t("User checked {0} presets{1}", pick.picked.length, pick.custom ? vscode.l10n.t(" + custom input") : ""));
@@ -134,11 +157,11 @@ export async function runColconBuild(data: BuildDataSource | null): Promise<void
     // ③ 记住本次选择(两条记忆各写各的槽,互不覆盖):
     //  · 包选择 → build-memory;knownPackages 快照用于识别"新出现的包"并默认勾选;
     //  · 二级参数选择 → selection-memory(只记选择:预设下标 + 自定义输入的完整原文)。
-    await buildMemory.writeBuildState(workspaceRoot, {
+    await buildMemory.writeBuildState({
         buildPackages: selectedPackages,
         knownPackages: packages.map(p => p.name),
     });
-    await writeSelectionMemory(workspaceRoot, COLCON_BUILD_COMMAND_ID, {
+    await writeSelectionMemory(COLCON_BUILD_COMMAND_ID, {
         picked: pick.picked,
         custom: pick.custom ?? "",
     });
@@ -154,8 +177,8 @@ export async function runColconBuild(data: BuildDataSource | null): Promise<void
         custom: pick.custom,
     });
     if (expanded.empty) {
-        log.error("Template expanded to empty; build cancelled (check ROS2.build.shareSpec.template)");
-        vscode.window.showErrorMessage(vscode.l10n.t("Build command expanded to empty; cancelled. Check the template in setting ROS2.build.shareSpec."));
+        log.error("Template expanded to empty; build cancelled (check ROS2.build.template)");
+        vscode.window.showErrorMessage(vscode.l10n.t("Build command expanded to empty; cancelled. Check the template in setting ROS2.build.template."));
         return;
     }
 

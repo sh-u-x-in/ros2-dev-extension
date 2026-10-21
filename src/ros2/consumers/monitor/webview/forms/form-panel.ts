@@ -10,7 +10,6 @@
  * 绝不做局部 body swap——局部重建依赖闭包持有的旧 DOM,是"点了没反应"的根源。
  */
 
-import { l10n } from "vscode";
 
 import { t } from "../shared/i18n";
 
@@ -228,7 +227,7 @@ export function rerenderServices(): void {
 
     // 十七轮:服务/动作两区块可折叠(标题行尾 ▾/▸,状态跨刷新记忆)
     const svcSection = buildCollapsibleSection(
-        "services", "服务",
+        "services", t("Services"),
         buildInfoIcon(t("Real-time service list; click a row to expand the invocation form (field structure auto-parsed by the resident helper from the service type; defaults pre-filled). Action rows: terminal icon = run ros2 service call in a regular integrated terminal (persistent; command visible, editable and rerunnable); copy icon = copy the full command; expand/collapse all = expand or collapse all field groups (all collapsed by default; group header ▸/▾ blocks can be toggled individually). Just fill in values - no manual quote escaping needed (handled automatically during assembly); input is not validated, validation happens when you click call/copy - error fields get a red outline + red ! badge, hover the badge for details. Keyboard: Enter inserts a newline in string fields (multi-line), moves to the next field for numeric; Shift+Enter creates a new array element; Backspace in an empty field goes up, deleting the whole object when the first field is empty.")),
         "svc-action-status",
     );
@@ -236,7 +235,7 @@ export function rerenderServices(): void {
     const svcList = document.createElement("div");
     svcList.className = "entry-list";
     for (const s of lastServicesData) {
-        svcList.appendChild(buildInvocableRow("service", s.name, s.type, "", "调用"));
+        svcList.appendChild(buildInvocableRow("service", s.name, s.type, "", t("Call")));
     }
     if (lastServicesData.length === 0) {
         const empty = document.createElement("p");
@@ -247,7 +246,7 @@ export function rerenderServices(): void {
     svcSection.body.appendChild(svcList);
 
     const actSection = buildCollapsibleSection(
-        "actions", "动作",
+        "actions", t("Actions"),
         buildInfoIcon(t("Actions appear on the graph as three services: send_goal / cancel_goal / get_result, stripped from the service list; this expands a Goal form per target (defaults pre-filled); Send = ros2 action send_goal --feedback (the CLI wraps the _SendGoal shell and unique_id), feedback streams to the terminal. Keyboard and validation rules match services (Enter newline in strings / next field for numeric; Shift+Enter creates array elements; Backspace in empty field goes up; validation on send/copy, error fields get red outline + ! badge).")),
         "goal-action-status",
     );
@@ -255,7 +254,7 @@ export function rerenderServices(): void {
     const actList = document.createElement("div");
     actList.className = "entry-list";
     for (const a of lastActionsData) {
-        actList.appendChild(buildInvocableRow("action", a.name, a.type, (a.verbs ?? []).join("/"), "发送目标"));
+        actList.appendChild(buildInvocableRow("action", a.name, a.type, (a.verbs ?? []).join("/"), t("Send goal")));
     }
     if (lastActionsData.length === 0) {
         const empty = document.createElement("p");

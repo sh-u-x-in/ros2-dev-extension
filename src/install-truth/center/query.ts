@@ -321,6 +321,8 @@ export interface SidebarRow {
     linkDomain?: "src" | "build" | "outside";
     /** 该行是**经哪条上游目录软链**进来的(扩大成因) */
     viaLinkDomain?: "src" | "build" | "outside";
+    /** 上游目录软链的路径(2026-10-16:落点修改时间 = 指针本体时间,经目录链行取它的 lstat) */
+    viaLinkPath?: string;
     dangling?: boolean;
     /** 残留(2026-10-14):lib 区行,最近一次构建的声明已不认 —— 展示侧默认隐藏,眼睛按钮切换 */
     leftover?: boolean;
@@ -342,7 +344,7 @@ export interface SidebarPackageView {
     installForm?: "symlink" | "copy" | "unknown";
     /** 包**构建类型**(`BuildPackage.type`,即 `inferType`:`ament_cmake|ament_python|cmake|python-or-unknown`;包不在 packages 表 → undefined) */
     buildType?: BuildTypeName;
-    /** 最近一次构建时刻(colcon_build.rc mtime;纯展示,**不参与指纹**;未构建/未读到 = undefined) */
+    /** 最近一次构建时刻(colcon_build.rc mtime;2026-10-16 起**参与全局指纹**——纯重编也让侧边栏重绘,逐包指纹仍不含;未构建/未读到 = undefined) */
     buildTimeMs?: number;
     rows: SidebarRow[];
 }
@@ -414,6 +416,7 @@ export function rowsOf(pkgAreas: PackageAreas, jumps?: JumpEntry[]): SidebarRow[
             linkTarget: f.linkTarget,
             linkDomain: f.linkDomain,
             viaLinkDomain: f.viaLinkDomain,
+            viaLinkPath: f.viaLinkPath,
             dangling: f.dangling,
             leftover: f.leftover,
             executable: f.executable,
@@ -641,7 +644,7 @@ export class ExecutableResolver {
         }
         const rows = rowsOf(pkgAreas, snapshot.jumps.get(pkg));
         // 2026-09-25(第三批):包级属性随视图下发 —— 安装类型以 install 观察为准,构建类型取 build traits
-        // 2026-10-14:构建时间(rc mtime)随视图下发(纯展示,不参与指纹)
+        // 2026-10-14:构建时间(rc mtime)随视图下发(2026-10-16 起参与全局指纹:纯重编也让侧边栏重绘;逐包指纹仍不含)
         const rcMs = snapshot.buildTimes?.get(pkg);
         return {
             pkg,

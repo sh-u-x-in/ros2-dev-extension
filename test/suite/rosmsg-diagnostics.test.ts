@@ -11,6 +11,7 @@
  *  - 结构错误(srv 缺 ---) → error
  *  - 未知消息类型(索引查不到) → warning
  *  - 已知消息类型(索引命中) → 无未知类型 warning
+ *  - 接口名不合规(文件基名,rosidl 构建期同判) → error
  */
 
 import * as assert from 'assert';
@@ -203,5 +204,44 @@ describe('rosmsg 语义诊断(analyzeDocument)', () => {
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }
+    });
+
+    // ---------- 接口名合规(文件级,rosidl 构建期同判) ----------
+    // 断言口径:名字诊断是文档唯一的 l10n 文案(其余诊断硬编码中文),为对宿主界面语言保持
+    // 中立,一律按 severity 计数识别,消息只断言区域无关的插值片段(基名/模式原文)
+
+    it('接口名不合规(my-msg.msg) → 1 条 Error,消息含基名与模式', async () => {
+        const result = await analyzeDocument(makeDoc('my-msg.msg', ''), makeIndex());
+        const errs = result.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
+        assert.strictEqual(errs.length, 1);
+        assert.ok(errs[0].message.includes('my-msg'), `消息应包含基名: ${errs[0].message}`);
+        assert.ok(errs[0].message.includes('^[A-Z][A-Za-z0-9]*$'), `消息应包含 rosidl 模式: ${errs[0].message}`);
+    });
+
+    it('接口名合规(MyMsg.msg) → 空文档零诊断', async () => {
+        const result = await analyzeDocument(makeDoc('MyMsg.msg', ''), makeIndex());
+        assert.strictEqual(result.length, 0);
+    });
+
+    it('种类感知:Foo_Goal.msg 合规,Foo_Request.srv 不合规(构建期同判)', async () => {
+        const ok = await analyzeDocument(makeDoc('Foo_Goal.msg', 'int32 a\n'), makeIndex());
+        assert.strictEqual(ok.filter(d => d.severity === vscode.DiagnosticSeverity.Error).length, 0);
+
+        // srv 内容自带合法 --- 分隔线,排除结构错误干扰,Error 恰为名字诊断一条
+        const bad = await analyzeDocument(makeDoc('Foo_Request.srv', 'int32 a\n---\nint32 b\n'), makeIndex());
+        const errs = bad.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
+        assert.strictEqual(errs.length, 1);
+        assert.ok(errs[0].message.includes('Foo_Request'), `消息应包含基名: ${errs[0].message}`);
+    });
+
+    it('非接口扩展名(test.txt) → 不产生名字诊断', async () => {
+        const result = await analyzeDocument(makeDoc('test.txt', ''), makeIndex());
+        assert.strictEqual(result.filter(d => d.severity === vscode.DiagnosticSeverity.Error).length, 0);
+    });
+
+    it('名字诊断与内容诊断共存:坏名 Error + 未知类型 Warning 各一条', async () => {
+        const result = await analyzeDocument(makeDoc('my-msg.msg', 'geometry_msgs/PoseStamped pose\n'), makeIndex());
+        assert.strictEqual(result.filter(d => d.severity === vscode.DiagnosticSeverity.Error).length, 1);
+        assert.strictEqual(result.filter(d => d.severity === vscode.DiagnosticSeverity.Warning).length, 1);
     });
 });

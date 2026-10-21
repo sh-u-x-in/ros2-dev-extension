@@ -18,7 +18,6 @@ export type { EnvironmentFacade } from "./environment-facade";
 export type { CommandRunner, CommandExecError, ExecResult } from "./command-runner";
 export type { Ros2ServiceApi, PackageEntry, LifecycleState } from "./ros2-service-api";
 export type { RosTaskRunner, ColconBuildOptions, ColconInstallType, ColconInstallMethod, ColconInstallLayout, Ros2RunOptions, Ros2LaunchOptions } from "./ros-task-runner";
-export type { SettingsProvider, ExtensionSettings, WalkTimeoutOverride } from "./settings";
 // 2026-08-26:RosTerminal(A7 交互终端)已废弃注释,export 一并移除(见 ros-terminal.ts 头部说明)
 // 2026-09-25:RunOrchestration 占位接口已删除(run/launch 重做落地 build-tool/package-service/run 域,无需占位)
 // 2026-08-31:ActivationDeps 已随 onDidEndTask 链移除(接口唯一成员 isROSBuildTask 删除,文件废弃注释化)

@@ -17,7 +17,7 @@ import * as vscode from "vscode";
 
 import { getLogger } from "../../../logger";
 import { composeApi } from "../../../ros2/api";
-import { ros2LaunchMemoryId } from "../share/defaults/ros2-launch";
+import { ros2LaunchMemoryId, ROS2_LAUNCH_SPEC } from "../share/defaults/ros2-launch";
 import { pickPresets } from "../share/pick-preset";
 import { readSelectionMemory, writeSelectionMemory } from "../share/selection-memory";
 import type { LaunchTarget, RunDataSource } from "./run-data-source";
@@ -27,23 +27,39 @@ import { expandRos2Launch, readRosLaunchSpec } from "./share-spec";
 /** smart-launch 模块日志 */
 const log = getLogger("smart-launch");
 
+/**
+ * 入口环境早退(P1+P5,2026-10-18):门关一句拒绝,不进选择/记忆写盘链。
+ * 三个入口(面板 / Ctrl+F10 / 侧边栏 ▶)共用;文案与执行层终点门同键(终点门保留 = 纵深)。
+ * 副作用修复:旧链在终点被拒(return 不抛)后 notifyStaleIfNeeded 仍无条件执行,
+ * 环境+陈旧双弹窗——入口早退后该路径不再到达。
+ */
+function refuseIfNoEnvAtEntry(where: string): boolean {
+    const issue = composeApi.environment.getEnvIssue();
+    if (issue === null) {
+        return false;
+    }
+    log.info(vscode.l10n.t("Smart launch refused at entry ({0}): no usable ROS 2 environment", where));
+    vscode.window.showErrorMessage(vscode.l10n.t("No usable ROS 2 environment detected; cannot execute. Reason: {0}. Configure and activate a ROS environment (ROS2.rosSetupScript / ROS2.pixiRoot) first, then retry.", issue));
+    return true;
+}
+
 /** 单个目标的完整启动流程:读记忆 → 参数弹窗(预填)→ 写记忆 → 展开 → 任务终端 */
 async function executeLaunchSelection(workspaceRoot: string, target: LaunchTarget): Promise<void> {
     const memoryId = ros2LaunchMemoryId(target);
-    const memory = await readSelectionMemory(workspaceRoot, memoryId);
+    const memory = await readSelectionMemory(memoryId);
     const pick = await pickPresets(readRosLaunchSpec(), {
         title: vscode.l10n.t("Launch {0} / {1} - launch arguments", target.pkg, target.name),
         placeholder: "勾选要追加的参数(多选;不勾则用模板默认)",
         customTitle: vscode.l10n.t("Launch {0} / {1} - launch arguments", target.pkg, target.name),
-        customPlaceholder: vscode.l10n.t("e.g. x:=1 y:=2 (empty input = no arguments)"),
         customValue: memory.custom,
         remembered: { picked: memory.picked, custom: memory.custom.length > 0 },
+        factory: ROS2_LAUNCH_SPEC,
     });
     if (pick === undefined) {
         log.trace("用户在参数选择处取消");
         return;
     }
-    await writeSelectionMemory(workspaceRoot, memoryId, { picked: pick.picked, custom: pick.custom ?? "" });
+    await writeSelectionMemory(memoryId, { picked: pick.picked, custom: pick.custom ?? "" });
 
     const expanded = expandRos2Launch({
         pkg: target.pkg,
@@ -53,7 +69,7 @@ async function executeLaunchSelection(workspaceRoot: string, target: LaunchTarge
         custom: pick.custom,
     });
     if (expanded.empty) {
-        vscode.window.showErrorMessage(vscode.l10n.t("Launch command expanded to empty; cancelled. Check the template in setting ROS2.launch.shareSpec."));
+        vscode.window.showErrorMessage(vscode.l10n.t("Launch command expanded to empty; cancelled. Check the template in setting ROS2.tool.launch.template."));
         return;
     }
     // 启动照常先行;陈旧附加警告(2026-10-13,与 run 路径同构):源 launch 文件比 share 区副本新时,
@@ -80,6 +96,9 @@ export async function runRosLaunchFile(data: RunDataSource | null): Promise<void
         vscode.window.showErrorMessage(vscode.l10n.t("Launch file info not ready; cannot launch (please wait and retry)"));
         return;
     }
+    if (refuseIfNoEnvAtEntry("panel")) {
+        return;
+    }
     const targets = await data.launchFiles();
     if (targets.length === 0) {
         vscode.window.showWarningMessage(vscode.l10n.t("No launch files found under install — run colcon build first (the package must install its launch/ directory into share)."));
@@ -98,6 +117,14 @@ export async function runRosLaunchFile(data: RunDataSource | null): Promise<void
 /** 一键运行(Ctrl+F10,.launch.*):源文件 → launchFiles 快照按 sourcePath 匹配 → 直接启动。
  *  未命中(未构建/无映射)→ 提示先构建,不自动构建。 */
 export async function launchActiveEditor(data: RunDataSource | null, srcPath: string): Promise<void> {
+    if (data === null) {
+        // 2026-10-18(P1+P5)补判空:旧实现直接解引用 data,null 时 TypeError 靠注册层兜底
+        vscode.window.showErrorMessage(vscode.l10n.t("Launch file info not ready; cannot launch (please wait and retry)"));
+        return;
+    }
+    if (refuseIfNoEnvAtEntry("active-editor")) {
+        return;
+    }
     let target = await data.launchFileOfSource(srcPath);
     if (target === undefined) {
         // 兜底(2026-09-30 四轮):launch 行可能源解析缺失(无源行,install-rule 未命中)——
@@ -136,6 +163,9 @@ export async function launchFileFromTree(req: {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (workspaceRoot === undefined) {
         vscode.window.showErrorMessage(vscode.l10n.t("No workspace folder found"));
+        return;
+    }
+    if (refuseIfNoEnvAtEntry("tree")) {
         return;
     }
     await executeLaunchSelection(workspaceRoot, {

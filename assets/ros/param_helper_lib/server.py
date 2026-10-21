@@ -2,12 +2,13 @@
 # Licensed under the MIT License.
 
 """常驻助手服务端(彻底推倒重来 2026-10-06):单固定路径 Unix socket,信封帧协议。
-职责:flock 冷启动仲裁、accept 即注册连接(无握手)、上行信封解析与派发、
+职责:flock 冷启动仲裁、accept 即注册连接、**连接首帧 hello 环境指纹握手**(P4:不匹配
+deny 踢除;未验证连接不计连接数、不参与广播/心跳)、上行信封解析与派发、
 response 只回发起连接、push 广播与 param 定向推送(按订阅账本过滤)、
 服务端每秒心跳(带负荷,加权采样)、半死连接清理(ping 超时)、零客户端宽限自退。
-帧=一行 JSON;上行信封 {client,id,time,request{op,...}},
-下行信封 {service,time,cl-num} + response|heartbeat|push 三选一。
-无版本握手(插件从未发布,无历史);pid 复用防护靠 time(启动时刻)字段。"""
+帧=一行 JSON;上行首帧 hello{proto,env},此后信封 {client,id,time,request{op,...}},
+下行信封 {service,time,cl-num} + response|heartbeat|push|deny 四选一。
+pid 复用防护靠 time(启动时刻)字段。"""
 
 import fcntl
 import json
@@ -18,18 +19,20 @@ import threading
 import time
 
 from .kernel import (
-    CLIENT_STALE_SEC, GRACE_EXIT_SEC, LOCK_PATH, MAX_FRAME_BYTES,
-    SEND_QUEUE_MAX, SOCKET_PATH, TELEMETRY_INTERVAL_SEC,
-    TELEMETRY_SAMPLE_INTERVAL_SEC, disk_log, helper_log,
+    CLIENT_STALE_SEC, GRACE_EXIT_SEC, HELLO_TIMEOUT_SEC, HELPER_FINGERPRINT_KEYS,
+    LOCK_PATH, MAX_FRAME_BYTES, PROTO_VERSION, SEND_QUEUE_MAX, SOCKET_PATH,
+    TELEMETRY_INTERVAL_SEC, TELEMETRY_SAMPLE_INTERVAL_SEC,
+    disk_log, helper_fingerprint, helper_log,
 )
 
 # ---- 进程级状态 ----
 _START_WALL = time.time()      # 服务端启动时刻(下行信封 time 字段;客户端据此推算 up/识别重启)
 _lock_fd = None
-_clients: dict = {}            # conn → {label, client_time, last_seen, sendq, alive, ledger}
+_clients: dict = {}            # conn → {label, client_time, last_seen, sendq, alive, ledger, verified, hello_at}
 _clients_lock = threading.Lock()
 _ever_connected = False
 _zero_since = None             # 连接数归零的起始时刻(宽限计时)
+_fingerprint = None            # 服务端环境指纹(run 时自 os.environ 计算;P4 握手比对基准)
 
 # 由 main() 注入:dispatch(conn, client_pid, client_time, rid, op, req)——业务请求进池的入口
 _dispatch = None
@@ -37,10 +40,11 @@ _dispatch = None
 _telemetry_provider = None
 
 
-def acquire_lock():
+def acquire_lock(ext_version: str = "0"):
     """flock 非阻塞抢锁;抢到=本进程是服务端,抢不到=已有服务端在跑,调用方应立即退出。
-    锁文件记 pid/启动epoch/进程启动ticks——客户端杀进程前按启动 ticks 核对,防 pid 复用杀错人。
-    flock 进程死亡内核自动释放——锁永远不会陈旧。"""
+    锁文件记四字段 pid/启动epoch/进程启动ticks/扩展版本——客户端杀前按启动 ticks 核对,
+    防 pid 复用杀错人;第 4 字段=版本治理(TS 侧 VERSION-CONTROL.md):客户端比对扩展
+    版本裁杀旧拉新,缺失/占位 "0" 按最旧处置。flock 进程死亡内核自动释放——锁永不陈旧。"""
     global _lock_fd
     fd = os.open(LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o644)
     try:
@@ -49,8 +53,9 @@ def acquire_lock():
         os.close(fd)
         return False
     _lock_fd = fd
+    ver = (ext_version or "").strip().split()
     os.ftruncate(fd, 0)
-    os.write(fd, f"{os.getpid()} {int(time.time())} {_proc_start_ticks()}\n".encode("utf-8"))
+    os.write(fd, f"{os.getpid()} {int(time.time())} {_proc_start_ticks()} {ver[0] if ver else '0'}\n".encode("utf-8"))
     return True
 
 
@@ -90,9 +95,10 @@ def _kick(conn, reason):
 
 
 def _envelope():
-    """下行信封:service=pid,time=服务端启动时刻,cl-num=当前连接数(发送时点)"""
+    """下行信封:service=pid,time=服务端启动时刻,cl-num=当前**已验证**连接数(发送时点;
+    P4:未通过 hello 的连接不计入)"""
     with _clients_lock:
-        cl = len(_clients)
+        cl = sum(1 for e in _clients.values() if e.get("verified"))
     return {"service": os.getpid(), "time": _START_WALL, "cl-num": cl}
 
 
@@ -132,9 +138,10 @@ def send_to(conn, push_payload):
 
 
 def broadcast_push(push_payload):
-    """push 广播(graph/param_structure/lifecycle);每连接独立队列(慢客户端只丢自己)"""
+    """push 广播(graph/param_structure/lifecycle);每连接独立队列(慢客户端只丢自己)。
+    P4:仅发已验证连接(未通过 hello 的不算)。"""
     with _clients_lock:
-        entries = list(_clients.values())
+        entries = [e for e in _clients.values() if e.get("verified")]
     if not entries:
         return
     payload = _envelope()
@@ -147,9 +154,10 @@ def broadcast_push(push_payload):
 
 
 def send_heartbeat(hb_payload):
-    """每秒心跳广播(负荷快照;up 由 time 推导,ver 已随增量协议退役)"""
+    """每秒心跳广播(负荷快照;up 由 time 推导,ver 已随增量协议退役)。
+    P4:仅发已验证连接。"""
     with _clients_lock:
-        entries = list(_clients.values())
+        entries = [e for e in _clients.values() if e.get("verified")]
     if not entries:
         return
     payload = _envelope()
@@ -242,9 +250,42 @@ def _writer_loop(conn, entry):
             entry["sendq"].task_done()
 
 
+def _fingerprint_mismatches(client_env):
+    """P4:客户端 hello.env 与服务端启动指纹逐键比对,返回失配明细
+    [(wire_key, server_value, client_value)];空列表=通过。
+    取值键大小写双收,未设与 "" 归一 "0"(与 helper_fingerprint 同口径);
+    明细直供 deny reason——2026-10-18 事故教训:泛化文案无法定位是哪个键漂移。"""
+    fp = _fingerprint if _fingerprint is not None else helper_fingerprint()
+    if not isinstance(client_env, dict):
+        return [(key.lower(), fp[key], "<not-a-dict>") for key in HELPER_FINGERPRINT_KEYS]
+    mismatches = []
+    for key in HELPER_FINGERPRINT_KEYS:
+        value = client_env.get(key.lower(), client_env.get(key))
+        text = str(value) if value not in (None, "") else "0"
+        if text != fp[key]:
+            mismatches.append((key.lower(), fp[key], text))
+    return mismatches
+
+
+def _fingerprints_differ(client_env):
+    """P4:客户端 hello.env 与服务端启动指纹是否失配(见 _fingerprint_mismatches)。"""
+    return bool(_fingerprint_mismatches(client_env))
+
+
+def _send_deny(conn, reason):
+    """deny 帧(P4:指纹不匹配/首帧违规);best-effort——随后 _kick 关连接"""
+    try:
+        payload = {"service": os.getpid(), "time": _START_WALL, "cl-num": 0,
+                   "deny": {"reason": reason}}
+        conn.sendall(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+    except OSError:
+        pass
+    disk_log(f"deny 已发:{reason}")
+
+
 def _reader_loop(conn, entry):
-    """每连接读线程:行缓冲→上行信封解析→派发。任何有效帧刷新 last_seen 并登记标签;
-    无握手、无首帧约束(resync 由客户端自觉先发)。断开→注销(账本随条目湮灭)。"""
+    """每连接读线程:行缓冲→**首帧 hello 握手(P4:proto+环境指纹,不匹配 deny 踢除)**→
+    上行信封解析→派发。任何有效帧刷新 last_seen 并登记标签;断开→注销(账本随条目湮灭)。"""
     global _zero_since
     buf = ""
     try:
@@ -265,6 +306,24 @@ def _reader_loop(conn, entry):
                 except ValueError:
                     continue   # 单行坏帧忽略(协议在我们的私有 fd 上,外物进不来)
                 if not isinstance(frame, dict):
+                    continue
+                if not entry.get("verified"):
+                    # P4 握手:首帧必须是 hello,proto 与指纹全对才放行;违规先 deny 再踢
+                    hello = frame.get("hello")
+                    if not isinstance(hello, dict) or hello.get("proto") != PROTO_VERSION:
+                        _send_deny(conn, f"first frame must be a hello with proto {PROTO_VERSION}")
+                        _kick(conn, "首帧非 hello / 协议版本不符")
+                        return
+                    mismatches = _fingerprint_mismatches(hello.get("env"))
+                    if mismatches:
+                        detail = "; ".join(f"{k} client='{c}' server='{s}'" for k, s, c in mismatches)
+                        reason = f"environment fingerprint mismatch: {detail}"
+                        _send_deny(conn, reason)
+                        _kick(conn, f"环境指纹不匹配({detail})")
+                        return
+                    with _clients_lock:
+                        entry["verified"] = True
+                    disk_log(f"客户端握手通过:标签={frame.get('client', '?')}")
                     continue
                 client_pid = str(frame.get("client", "?"))
                 now = time.monotonic()
@@ -349,52 +408,73 @@ def _sampler_loop():
     """加权采样线程(20ms):只记六项均值指标;零客户端不采样不积累"""
     while True:
         time.sleep(TELEMETRY_SAMPLE_INTERVAL_SEC)
-        with _clients_lock:
-            has = bool(_clients)
-        if not has:
-            _reset_samples()
-            continue
-        if _telemetry_provider is None:
-            continue
         try:
-            snap = _telemetry_provider()
-        except Exception:  # noqa: BLE001 — 单拍失败跳过,不影响均值
-            continue
-        _last_snapshot.clear()
-        _last_snapshot.update(snap)
-        _record_sample(snap)
+            _sampler_tick()
+        except Exception as e:  # noqa: BLE001 — 2026-10-19 僵尸助手教训:巡检线程任何
+            # 一拍都不允许无声死亡(死一次=对应能力全灭且无留痕),崩溃必须留痕存活
+            disk_log(f"[diag] sampler tick 异常存活: {type(e).__name__}: {e}")
+
+
+def _sampler_tick():
+    with _clients_lock:
+        has = bool(_clients)
+    if not has:
+        _reset_samples()
+        return
+    if _telemetry_provider is None:
+        return
+    snap = _telemetry_provider()
+    _last_snapshot.clear()
+    _last_snapshot.update(snap)
+    _record_sample(snap)
 
 
 def _housekeeping_loop():
-    """1s 巡检:半死连接清理(ping 超 CLIENT_STALE_SEC)+ 心跳发布 + 零客户端宽限自退。
-    心跳=加权发布:六项负荷取 20ms 采样窗口均值,窗口没采到回退瞬时快照保证字段齐。"""
+    """1s 巡检:半死连接清理(ping 超 CLIENT_STALE_SEC)+ 未验证 hello 超时踢除(P4)+
+    心跳发布 + 零客户端宽限自退。心跳=加权发布:六项负荷取 20ms 采样窗口均值,
+    窗口没采到回退瞬时快照保证字段齐。
+    逐拍守护(2026-10-19 僵尸助手教训):本线程曾死于 stderr 断管后的宽限 warn
+    (BrokenPipeError,无声)——死一次=心跳/踢除/自退全灭,进程变僵尸助手
+    (请求应答正常、广播全无,客户端与用户都无法分辨)。任何一拍异常必须留痕存活。"""
     global _zero_since
     while True:
         time.sleep(TELEMETRY_INTERVAL_SEC)
-        now = time.monotonic()
-        with _clients_lock:
-            stale = [c for c, e in _clients.items()
-                     if now - e["last_seen"] > CLIENT_STALE_SEC]
-        for conn in stale:
-            _kick(conn, f"ping 超时>{CLIENT_STALE_SEC:.0f}s(半死)")
-        with _clients_lock:
-            has_clients = bool(_clients)
-        if has_clients and _telemetry_provider is not None:
-            averages = _take_averages()
-            if averages:
-                send_heartbeat(averages)
-            else:
-                send_heartbeat({k: _last_snapshot[k] for k in AVERAGED_KEYS
-                                if k in _last_snapshot})
-        with _clients_lock:
-            zero = not _clients and _ever_connected
-            zero_for = (now - _zero_since) if (_zero_since is not None) else 0
-        if zero and zero_for > GRACE_EXIT_SEC:
-            helper_log("warn", "零客户端宽限耗尽,服务端自退(扩展端会在需要时重启)")
-            disk_log(f"零客户端>{GRACE_EXIT_SEC:.0f}s → 干净退场 (pid={os.getpid()})")
-            _cleanup()
-            from . import ros_domain
-            ros_domain.graceful_exit(0)
+        try:
+            _housekeeping_tick()
+        except Exception as e:  # noqa: BLE001
+            disk_log(f"[diag] housekeeping tick 异常存活: {type(e).__name__}: {e}")
+
+
+def _housekeeping_tick():
+    now = time.monotonic()
+    with _clients_lock:
+        stale = [c for c, e in _clients.items()
+                 if now - e["last_seen"] > CLIENT_STALE_SEC]
+        unverified = [c for c, e in _clients.items()
+                      if not e.get("verified")
+                      and now - e.get("hello_at", now) > HELLO_TIMEOUT_SEC]
+    for conn in unverified:
+        _kick(conn, f"hello 超时>{HELLO_TIMEOUT_SEC:.0f}s(未验证)")
+    for conn in stale:
+        _kick(conn, f"ping 超时>{CLIENT_STALE_SEC:.0f}s(半死)")
+    with _clients_lock:
+        has_clients = bool(_clients)
+    if has_clients and _telemetry_provider is not None:
+        averages = _take_averages()
+        if averages:
+            send_heartbeat(averages)
+        else:
+            send_heartbeat({k: _last_snapshot[k] for k in AVERAGED_KEYS
+                            if k in _last_snapshot})
+    with _clients_lock:
+        zero = not _clients and _ever_connected
+        zero_for = (now - _zero_since) if (_zero_since is not None) else 0
+    if zero and zero_for > GRACE_EXIT_SEC:
+        helper_log("warn", "零客户端宽限耗尽,服务端自退(扩展端会在需要时重启)")
+        disk_log(f"零客户端>{GRACE_EXIT_SEC:.0f}s → 干净退场 (pid={os.getpid()})")
+        _cleanup()
+        from . import ros_domain
+        ros_domain.graceful_exit(0)
 
 
 def read_rss_kb():
@@ -412,9 +492,10 @@ def read_rss_kb():
 def run(dispatch, telemetry_provider):
     """服务端主入口(阻塞,accept 线程永不返回):bind+listen+accept 即注册。
     dispatch:main 注入 (conn, client_pid, client_time, rid, op, req)"""
-    global _dispatch, _telemetry_provider, _ever_connected, _zero_since
+    global _dispatch, _telemetry_provider, _ever_connected, _zero_since, _fingerprint
     _dispatch = dispatch
     _telemetry_provider = telemetry_provider
+    _fingerprint = helper_fingerprint()
     if os.path.exists(SOCKET_PATH):
         # 能走到这里=锁在我们手里,socket 文件必是上具尸体(ECONNREFUSED 类),直接清
         try:
@@ -424,19 +505,20 @@ def run(dispatch, telemetry_provider):
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCKET_PATH)
     server.listen(8)
-    disk_log(f"服务端就绪:{SOCKET_PATH} (pid={os.getpid()}, 信封帧协议,"
-             f"启动时刻={_START_WALL})")
+    disk_log(f"服务端就绪:{SOCKET_PATH} (pid={os.getpid()}, 信封帧协议+hello 指纹握手,"
+             f"指纹={_fingerprint}, 启动时刻={_START_WALL})")
     threading.Thread(target=_sampler_loop, daemon=True).start()
     threading.Thread(target=_housekeeping_loop, daemon=True).start()
     while True:
         conn, _addr = server.accept()
         entry = {"label": "?", "client_time": None, "last_seen": time.monotonic(),
-                 "sendq": queue.Queue(maxsize=SEND_QUEUE_MAX), "alive": True, "ledger": {}}
+                 "sendq": queue.Queue(maxsize=SEND_QUEUE_MAX), "alive": True, "ledger": {},
+                 "verified": False, "hello_at": time.monotonic()}
         with _clients_lock:
             _clients[conn] = entry
             count = len(_clients)
             _ever_connected = True
             _zero_since = None
-        disk_log(f"客户端接入(标签待首帧;连接数 {count})")
+        disk_log(f"客户端接入(待 hello 握手;连接数 {count})")
         threading.Thread(target=_writer_loop, args=(conn, entry), daemon=True).start()
         threading.Thread(target=_reader_loop, args=(conn, entry), daemon=True).start()

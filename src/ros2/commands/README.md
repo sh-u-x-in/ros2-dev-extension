@@ -28,17 +28,17 @@
 2026-08-31 起 `colcon_build` 成为**扩展构建的唯一执行入口**;2026-09-22 起它**不再拼装任何命令**:
 
 - **命令构造已移出本域(2026-09-22)**:原纯函数 `toColconBuildCommand` **已删除**。扩展自己的 colcon 命令由
-  build 域的模板引擎(`build/share-spec.ts` 读设置 `ROS2.build.shareSpec`)展开成**整条 argv** 后传进来;
+  build 域的模板引擎(`build/share-spec.ts` 读设置 `ROS2.build.template` + `ROS2.build.presets`,原 shareSpec 已两拆分)展开成**整条 argv** 后传进来;
   `ColconBuildOptions.argv` **必填**,本文件只 `command = argv[0]` / `args = argv.slice(1)`(命令名本身也可被用户改),
   空 argv ⇒ 报错不启动终端。`test/suite/ros-task-runner.test.ts` 随之删掉对应用例;
 - **消费方**:package-service/build 的智能构建(smart-build.ts)、右键单包构建(register-commands.ts)统一经
   `composeApi.rosTaskRunner.colcon_build`;任务为 shell 类型(经 runShellTask),`ColconProvider` 收窄为 tasks.json
   自定义 colcon 任务的 resolver(逻辑内联至 colcon-task-provider.ts,原 ros-shell.ts 已删除);
-- **install_type 两域分工(仅服务于测试链路)**:build/ `resolveInstallType()` 只做政策(平台 + `symlinkInstall`/`installLayout`
+- **install_type 两域分工(仅服务于测试链路)**:build/ `resolveInstallType()` 只做政策(平台 + `installMethod`/`installLayout`,原布尔键 symlinkInstall 已三值化
   → 两轴组合 {method,layout}),本文件 `toInstallTypeFlags` 只做翻译(组合 → `--symlink-install`/`--merge-install` 数组)。
   ⚠️ 扩展构建**不再走这条**:两轴由模板里的 `${install_method}` / `${install_layout}` 承载(值仍来自同一设置)。
 - **#12 环境门槛(2026-08-31)**:`colcon_build` / `rosdep` 执行前检查 `environmentState.getEnvIssue()`(2026-08-31 由 isAvailable 重设计,返回不可用原因 string|null,可直接拼进提示)——唯一判定(涵盖未 source/source 失败/环境非 ROS2 四情形,见 environment/README.md「source 机制与 getEnvIssue 判定」);不满足 → showErrorMessage 明确提示(附原因),不启动注定失败的终端;doctor 豁免;
-- **run / launch 重做完成(2026-09-25)**:收成 `Ros2RunOptions` / `Ros2LaunchOptions` 的 argv-only 模式(对齐 colcon_build —— 调用方 `build-tool/package-service/run/share-spec.ts` 按设置 `ROS2.run|launch.shareSpec`(2026-09-28 批次3 自 `ROS2.ros2.run|launch.shareSpec` 归位)展开整条 argv,本层只执行),补齐 #12 环境门槛;`toRos2RunCommand`/`toRos2LaunchCommand` 已删除,旧编排 `registry/ros-cli.ts` 同批删除;消费方 = run 域的命令面板与侧边栏 ▶;**2026-09-26/27 执行层再细分**:任务终端(runShellTask)之外新增 `terminal-run.ts` 普通集成终端路径;
+- **run / launch 重做完成(2026-09-25)**:收成 `Ros2RunOptions` / `Ros2LaunchOptions` 的 argv-only 模式(对齐 colcon_build —— 调用方 `build-tool/package-service/run/share-spec.ts` 按设置 `ROS2.tool.run|launch.template` + `ROS2.tool.run|launch.presets`(2026-10-18 键族迁 `tool.` 层;原 shareSpec 已两拆分)展开整条 argv,本层只执行),补齐 #12 环境门槛;`toRos2RunCommand`/`toRos2LaunchCommand` 已删除,旧编排 `registry/ros-cli.ts` 同批删除;消费方 = run 域的命令面板与侧边栏 ▶;**2026-09-26/27 执行层再细分**:任务终端(runShellTask)之外新增 `terminal-run.ts` 普通集成终端路径;
 - 参考:设计/重构/package-service/build域结构整理调研-2026-08-31-0028.md §5(收敛记录)、§8(安装方式分工);src/ros2/environment/README.md(构建后刷新链,与构建执行解耦)。
 
 ### 两种任务机制(勿混淆,2026-08-31)

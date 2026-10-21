@@ -16,7 +16,7 @@
 ## 关联
 
 - 源码工程:`native/walk-native/`(Rust/napi-rs,产出 `native/*.node` 三平台二进制);验证脚本:`scripts/walk-verify/`;
-- 设置:`ROS2.search.followSymlinks` / `walkTimeouts` / `excludeFolders`(walk/walk-options.ts 读)。
+- 设置:`ROS2.search.followSymlinks` / `search.walkTimeout.<type>.<field>` 12 平铺键 / `excludeFolders`(walk/walk-options.ts 读)。
 
 ## 修改记录
 

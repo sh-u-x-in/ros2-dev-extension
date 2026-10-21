@@ -388,8 +388,24 @@ describe("param tree(A6,2026-09-26)", () => {
             paramHelperClientMod.getParamValues("/talker", ["x"]),
             /Parameter helper is not running/);
         handlersHolder.cur!.onConnect();
-        // 连上后自动发 resync(首帧;回应到达=在线)
+        // P4:首帧 hello 环境指纹握手(先于 resync;env 门面未注入 → 指纹全 "0")
+        const helloIdx = writes.findIndex((w) => w.includes('"hello"'));
+        assert.ok(helloIdx >= 0, "连接后首帧应为 hello");
+        const helloFrame = JSON.parse(writes[helloIdx]);
+        assert.strictEqual(helloFrame.hello.proto, "rde-helper/1");
+        // 2026-10-18 契约加固:四键全名精确断言(此前只断言 ros_version,其余三键
+        // 错成短名也全绿——键名漂移正是那次恒 deny 事故的根因)
+        assert.deepStrictEqual(
+            Object.keys(helloFrame.hello.env).sort(),
+            ["rmw_implementation", "ros_distro", "ros_domain_id", "ros_version"]
+        );
+        assert.strictEqual(helloFrame.hello.env.ros_version, "0");
+        assert.strictEqual(helloFrame.hello.env.ros_distro, "0");
+        assert.strictEqual(helloFrame.hello.env.ros_domain_id, "0");
+        assert.strictEqual(helloFrame.hello.env.rmw_implementation, "0");
+        // 连上后自动发 resync(回应到达=在线;hello 必须先于 resync)
         const resyncFrame = JSON.parse(writes.find((w) => w.includes('"op":"resync"')) ?? "{}");
+        assert.ok(writes.findIndex((w) => w.includes('"op":"resync"')) > helloIdx, "hello 先于 resync");
         assert.strictEqual(resyncFrame.client, `exthost-${process.pid}`);
         assert.strictEqual(typeof resyncFrame.time, "number");
         assert.strictEqual(typeof resyncFrame.id, "number");

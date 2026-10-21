@@ -29,11 +29,13 @@ import type { CommandSpec } from "../types";
  */
 export const ROS2_LAUNCH_COMMAND_ID = "ros2.launch";
 
-/** 出厂默认模板 + 空预设(整份存设置 `ROS2.launch.shareSpec`,字段没给才回落到这里;模板 = 命令文本,引擎按 shell 词法切分) */
+/** 出厂默认模板 + 空预设(内部事实源;设置侧 2026-10-17 两拆分为 `ROS2.tool.launch.template` + `ROS2.tool.launch.presets`(2026-10-18 键族迁 `tool.` 层),字段没给才回落到这里;模板 = 命令文本,引擎按 shell 词法切分) */
 export const ROS2_LAUNCH_SPEC: CommandSpec = {
     template: "ros2 launch ${pkg} ${launch_file} ${0}",
     // (2026-10-04 i18n 期2,D3 裁定)出厂输入框描述走语言中立英文,与 manifest default 同步
     custom: "Launch arguments: arguments passed to the launch file (multiple segments and quotes allowed, e.g. x:=1 y:=2; empty input = no arguments)",
+    // (2026-10-18 查表区收缩批)占位提示升格为出厂数据:原为 smart-launch 调用方硬编码铬
+    customHint: "e.g. x:=1 y:=2",
     argv_list: [],
 };
 

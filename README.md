@@ -1,4 +1,4 @@
-# Robot Developer Extensions for ROS 2 (RDE for ROS 2)
+# ROS 2 Workbench
 
 A Visual Studio Code extension supporting [Robot Operating System 2 (ROS 2)](https://www.ros.org) development on Windows, Linux and macOS.
 
@@ -41,7 +41,7 @@ This extension is under **rapid active development** — features and behavior m
 Key settings (see [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/docs/en/configuration.md)):
 
 * `ROS2.env.*` — distribution / setup script / pixi environment;
-* `ROS2.build.shareSpec` / `ROS2.run.shareSpec` / `ROS2.launch.shareSpec` — the template & preset mechanism for the three commands;
+* `ROS2.build.template` + `ROS2.build.presets` / `ROS2.run.*` / `ROS2.launch.*` — the template & preset mechanism for the three commands (flat string + key-value table, editable directly in the Settings UI);
 * `ROS2.build.installMethod` / `ROS2.build.installLayout` — install method (auto / symlink / copy) and layout;
 * `ROS2.ide.*` — IntelliSense engine selection, per-engine managed-entry override tables, managed `.clangd` sorting;
 * `ROS2.packages.userIndex` — user-supplied descriptions for dependency candidates;

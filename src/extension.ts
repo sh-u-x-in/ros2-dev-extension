@@ -6,11 +6,14 @@
  * 扩展主入口:状态与生命周期骨架。
  * 公共状态(outputChannel / onDidChangeEnv / resolvedEnv / getEnv / Commands 枚举)
  * 在此导出供各模块复用;env 等环境状态已收进 environment/ 门面,activate 只做初始化与模块组装。
+ * 2026-10-18(P2 启动顺序倒换):activate 重排为「壳注册段 → await 环境检测 → 构造/reconcile 段」——
+ *  - 壳注册段:命令/视图/语言提供器全部注册但零后台活动(注册≠启动;await 期间外部命令调用排队不丢);
+ *  - 环境检测:await activateEnvironment(有环境机器典型 1-3s,无环境毫秒级快速失败);
+ *  - 构造/reconcile 段:package-core 等门内组件构造后按环境门显式 start(门关不启动,门开热启动)。
  * 已拆分模块:
- *  - src/environment/  环境判定 / source / 激活
- *  - src/commands/     按领域命令注册
- *  - src/listeners.ts  工作区 / 配置 / package.xml 监听
- *  - src/onboarding.ts 欢迎演练
+ *  - src/ros2/environment/  环境判定 / source / 激活
+ *  - src/commands/          按领域命令注册(统一围栏见 commands/gated-command.ts)
+ *  - src/onboarding.ts      欢迎演练
  */
 
 import * as vscode from "vscode";
@@ -27,8 +30,6 @@ import { ColconBuildCommand, ColconBuildPackageDebugCommand, ColconBuildPackageR
 import { createInstallTruthRunDataSource, registerRosRunCommands } from "./build-tool/package-service/run";
 // 2026-09-01:create 命令直连(与 colcon 同模式,经 create/index.ts 出口,不再经 commands/index.ts 转发)
 import { registerCreatePackageCommands } from "./build-tool/package-service/create";
-// 2026-09-04:config 除 gen 外断电——exe-map/write(01 一键配置/02 重命名)接线移除,命令不注册(详见 package-service/README)
-// 2026-08-28:build-env-utils 已废弃注释(配置生成迁 package-core/data/config-gen)
 
 // 2026-09-04:rosmsg 域唯一出口(languages/rosmsg/index),不再直连内部文件
 import { registerRosMessageProviders } from "./languages/rosmsg";
@@ -42,22 +43,30 @@ import { RosTestProvider } from "./test-provider/provider/ros-test-provider";
 import { registerInstallTruthSidebar } from "./sidebar/install-truth-sidebar";
 // 2026-09-24:共享 build-map 数据中心(侧边栏与测试侧共用;停用时释放)
 // 2026-09-30:接构建信号主动刷新(手工重设计/13;取代 9 组 build/** watcher 只置脏)
+// 2026-10-18(P2/P3):首扫挂环境门+pendingBuildScan 补扫,见 activate 内 onBuildSignal/reconcile
 import { acquireSharedBuildCenter, disposeSharedBuildCenter } from "./install-truth/center/shared-center";
+import { setEnsureFreshGate } from "./install-truth/center/build-map-center";
 // 2026-08-28:launch-tree 已废弃注释(用户确认废弃模块,接线移除)
 
 import * as environment from "./ros2/environment";
 import { environmentFacade } from "./ros2/environment";
 import { ShowDaemonStatusCommand } from "./ros2/host/commands";
 import * as rosTerminalProfile from "./ros2/consumers/terminal/terminal-profile";
+import { setParamHelperExtensionVersion } from "./ros2/consumers/monitor/helper/param-helper-client";
 import * as onboarding from "./onboarding";
 import * as commands from "./commands";
 import { createPackageCore, PackageCore, PackageCoreConfig } from "./build-tool/package-core/compose";
-// 2026-09-04:config 除 gen 外断电——exe-map(可执行映射)接线移除,代码留档不参与编译(tsconfig exclude)
+// 2026-10-18(P1):统一环境门服务(公式唯一载体,构建任务门与配置生成域共用)
+import { createGateService } from "./build-tool/package-core/gate";
 import { createIntellisenseConfig } from "./build-tool/package-service/config/gen/intellisense-config";
 import { registerInstallLayoutWatch } from "./build-tool/package-service/config/gen/install-layout-watch";
+import { renderSyncReportMessage } from "./build-tool/package-service/config/gen/intellisense-report";
+import { migrateLegacyStateFile, setStateStorageRoot } from "./build-tool/package-service/share/state-file";
 // 接口类型走独立接口层(对齐 ros2/api 范式)
 import type { IntellisenseConfig } from "./build-tool/package-service/config/gen/intellisense-api";
 import { StatusBarItem } from "./ros2/consumers/monitor/status-bar";
+// 2026-10-18 平铺批:walk 超时 12 键读取统一入口(自 vscode-utils 迁入,兑现 walk-options"读设置仅此处一处")
+import { readWalkTimeoutConfig } from "./build-tool/walk/walk-options";
 
 export let extPath: string;
 export let outputChannel: vscode.LogOutputChannel;
@@ -119,11 +128,11 @@ export enum Commands {
 
 /**
  * 组合根读「扫描取数」四键(断环注入:package-core 不读 vscode 配置,创建时与设置变化重下发共用)。
- * 生效时机一致化(2026-09-28 批次 4):ROS2.search.excludeFolders / search.followSymlinks / search.walkTimeouts / packages.refreshMs。
+ * 生效时机一致化(2026-09-28 批次 4):ROS2.search.excludeFolders / search.followSymlinks / search.walkTimeout.*(12 键,点分段前缀监听)/ packages.refreshMs。
  */
 function readPackageCoreScanConfig(): PackageCoreConfig {
     const cfg = vscode_utils.getExtensionConfiguration();
-    const walk = vscode_utils.readWalkTimeoutConfig("package");
+    const walk = readWalkTimeoutConfig("package");
     return {
         packageCacheRefreshMs: cfg.get<number>("packages.refreshMs", 60000),
         buildExcludeFolders: cfg.get<string[]>("search.excludeFolders", []),
@@ -134,85 +143,92 @@ function readPackageCoreScanConfig(): PackageCoreConfig {
 
 export async function activate(context: vscode.ExtensionContext) {
     try {
+        /* ════════ P2 阶段 A:壳注册段(环境检测之前;注册≠启动,零后台活动)════════ */
+
+        // A1 基座
         extPath = context.extensionPath;
         outputChannel = vscode_utils.createOutputChannel();
         // 日志通道注入:outputChannel 就绪后交给 logger(注入式,避免 logger 依赖本模块导致纯逻辑模块无法纯 Node 测试)
         setLogChannelGetter(() => outputChannel);
         extensionContext = context; // Store the context for later use
+        // 状态文件「转入地下」(2026-10-21 用户裁定):装配扩展私有存储根 + 一次性迁移旧 .vscode/ 文件
+        setStateStorageRoot(context.storageUri?.fsPath);
+        await migrateLegacyStateFile(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
         context.subscriptions.push(outputChannel);
 
-        // Set workspace context keys used by view visibility.
+        // A2 工作区 context key 初推(检测中 hasRosEnvironment=false,fail-closed;检测后 activate.ts:80 会再刷)
         await environment.refreshContextKeys();
 
-        // 2026-08-28(阶段 3):旧壳 10s 后台刷新停用(防与 package-core 双扫共享缓存),
-        // 由 package-core 驱动层(60s timer + fs 监听)接管;setPackagesChangedListener 随旧壳退役,
-        // 包变化信号切换为 packageCore.onDidChange(见下方上层编排者)。
+        // A3 平台 context key + 激活日志(纯 process.platform,无 env 依赖)
+        const isLinuxHost = process.platform === "linux";
+        const isWindowsHost = process.platform === "win32";
+        const isMacHost = process.platform === "darwin";
+        await Promise.all([
+            vscode.commands.executeCommand("setContext", "ros2.isLinuxHost", isLinuxHost),
+            vscode.commands.executeCommand("setContext", "ros2.isWindowsHost", isWindowsHost),
+            vscode.commands.executeCommand("setContext", "ros2.isMacHost", isMacHost),
+        ]);
+        log.info("ROS 2 extension is activating...");
+        log.debug(vscode.l10n.t("Platform context: linux={0}, windows={1}, mac={2}", isLinuxHost, isWindowsHost, isMacHost));
 
-        // package-core 组装(composition root;见 设计/重构/package-core重新设计/DESIGN.md)。
-        // 2026-08-28(阶段 3):驱动层通电(60s timer + fs 监听);gate/configGen 注入接线。
-        packageCore = createPackageCore({
-            workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-            enableWatcher: true,
-            // 断环注入(2026-08-29):组装根不再经 vscode-utils 读配置,由组合根读设置后传入
-            // 2026-09-28:周期不再硬编码——ROS2.packages.refreshMs 生效(生效时机一致化批次 4)
-            config: readPackageCoreScanConfig(),
-            // 门控编排(自 ros2/ 移入 package-core/gate):门槛经环境域,门控经本中心快照,
-            // 倾向经配置,注册动作经 package-service/build
-            buildTaskProviderGate: {
-                envAvailable: () => environmentFacade.getEnvIssue() === null,
-                hasPackages: () => (packageCore?.getState().workspace?.length ?? 0) > 0,
-                allowEmptyWorkspace: () =>
-                    vscode_utils.getExtensionConfiguration().get<boolean>("build.allowEmptyWorkspace", true),
-                registerBuildTaskProvider: () => registerBuildTaskProvider(),
+        // A4 RosApiDeps 注入(硬约束:必须先于环境检测——检测内 assemble/reconcile 调 activateCoreMonitor,
+        // 后置会让首次装配拿到 no-op,状态栏静默不启动)
+        environment.setRosApiDeps({
+            activateCoreMonitor: () => {
+                const item = new StatusBarItem();
+                item.activate();
+                return item;
             },
         });
-        context.subscriptions.push({ dispose: () => packageCore?.dispose() });
+        // 助手版本治理注入(2026-10-20,规范=helper/VERSION-CONTROL.md):本扩展版本
+        // 进锁文件第 4 字段,客户端据此裁杀旧拉新。不注入=治理禁用(安全态)。
+        setParamHelperExtensionVersion(String(context.extension?.packageJSON?.version ?? ""));
 
-        // ── 2026-09-04:config 除 gen 外断电——可执行映射(exe-map)接线整体移除,不实例化、不刷新(代码留档,tsconfig exclude)──
+        // A5 环境监听(门铃;P2:三路传感器统一走 refreshEnvironment 全量刷新,翻转时组件自动装配/回收)
+        environment.registerEnvironmentListeners(context);
 
-        // ── 上层编排者(2026-08-28,门控编排自 ros2/ 移出后的接线点)──
-        // 包变化(门控)→ 任务提供器注册同步 + 包 context key 反应式更新
-        // (2026-08-31:ros2.hasPackageXml 不再由 ros2/environment status.ts 查询式设置——包判定归 package-core,
-        //  UI 状态走事件驱动:首载/刷新完成 → onDidChange → setContext,VS Code 自动重估 when 条件)
-        const syncHasPackageXmlContext = (): void => {
-            const hasPackages = (packageCore?.getState().workspace?.length ?? 0) > 0;
-            void vscode.commands.executeCommand("setContext", "ros2.hasPackageXml", hasPackages);
-        };
-        packageCore.onDidChange(() => {
-            packageCore?.buildTaskProviderGate.sync();
-            syncHasPackageXmlContext();
-        });
-        syncHasPackageXmlContext(); // 启动初始设置(首载扫描完成前为 false,完成后 onDidChange 翻转)
+        // A6 C++ 格式化 provider(不依赖 env)
+        context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider(
+            "cpp", new cpp_formatter.CppFormatter()
+        ));
 
-        // ── intellisense-config 直连装配(2026-08-29 自 package-core 迁出,2026-08-30 迁 package-service/config/gen)──
-        // 数据消费者:读本中心快照 + 注入系统 include;系统 include 经 ros2/ 环境 env 注入
-        intellisenseConfig = createIntellisenseConfig({
-            workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
-            getState: () => packageCore!.getState(), // packageCore 已在上面赋值(同一激活流程),箭头函数闭包捕获不 narrowing,非空断言
-            // 2026-09-02:注入整个环境域门面(environmentFacade 结构化兼容 IntellisenseEnvSource),
-            // 裁切(前缀拼接/PYTHONPATH 提取/增量更新)全部在 intellisense-config 模块内自包含,组合根零裁切
-            environment: environmentFacade,
-        });
-        intellisenseConfig?.subscribe(packageCore.onDidChange);
-        context.subscriptions.push({ dispose: () => intellisenseConfig?.dispose() });
+        // A7 语言三域注册(P2 start 化:构造/注册零后台;门开由 B 段 reconcile / 首次打开文档触发 start)
+        const envGate = (): boolean => environmentFacade.getEnvIssue() === null;
+        const xacroPackages = new PackageMap();
+        const rosmsgDomain = registerRosMessageProviders(context, xacroPackages, envGate);
+        const xacroDomain = registerXacroProviders(xacroPackages, envGate);
+        const launchDomain = registerLaunchProviders(xacroPackages, envGate);
+        context.subscriptions.push(
+            ...rosmsgDomain.disposables,
+            ...xacroDomain.disposables,
+            ...launchDomain.disposables,
+        );
+        // 2026-09-07:ROS 2 Python/C++ 节点片段动态注入(每次补全才判定 ROS 工作区,惰性无后台)
+        context.subscriptions.push(registerRosPythonCompletion());
+        context.subscriptions.push(registerRosCppCompletion());
 
-        // 安装布局信号 → 配置重算(实现收在 gen/install-layout-watch.ts;组合根只组装,2026-09-16)
-        {
-            const layoutWsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (layoutWsRoot) {
-                context.subscriptions.push(registerInstallLayoutWatch({
-                    workspaceRoot: layoutWsRoot,
-                    logger: log,
-                    pollIntervalMs: 0, // 2026-09-16 验证期:先禁用 60s 内容比对兜底(方案 2 后只留 watcher 通道);验证完成后删本行即恢复默认
-                    onLayoutSignal: (reason: string) => {
-                        log.info(vscode.l10n.t("Config recompute signal: {0} -> regenerating IntelliSense configuration", reason));
-                        void intellisenseConfig?.sync();
-                    },
-                }));
-            }
-        }
+        // A8 测试域(P2 start 化:构造只建 controller,发现/订阅在显式 start)
+        rosTestProvider = new RosTestProvider();
+        context.subscriptions.push(rosTestProvider);
+
+        // A9 侧边栏(P2:data getter 注入——壳先注册,packageCore 后构造;可见性=views.when,数据根门=getChildren)
+        context.subscriptions.push(...registerInstallTruthSidebar(context, () => packageCore));
+
+        // A10 命令壳(handler 调用时自查门/数据活读;await 期间被调用会排队到 activate 返回后执行)
+        // 命令注册已拆分至 src/commands(registerAllCommands 统一入口)
+        commands.registerAllCommands(context);
+        // 2026-08-31(#4 方案 B):colcon 命令直连注入数据源(P2 getter 化)
+        registerColconCommands(context, () => packageCore);
+        // 2026-09-25:run/launch 命令(数据源自惰性)
+        context.subscriptions.push(...registerRosRunCommands(context, createInstallTruthRunDataSource()));
+        // 2026-09-01:create 命令直连(右键生成功能包;handler 活读 packageCore 可选链)
+        registerCreatePackageCommands(context);
+        // 注册"ROS 2 环境"终端配置文件(新建终端下拉框可选;profile 请求时才构建)
+        rosTerminalProfile.registerRosTerminalProfileProvider(context);
 
         // 用户可调用的"重新生成"(补写缺失条目,非强行覆盖;布局按当前 .colcon_install_layout 内容)
+        // 2026-10-17:域门控后 sync 可能被拦(skipped),按结果如实反馈"为什么没生成",不谎报成功
+        // 2026-10-20:applied 携带逐文件明细,动态文案渲染"改了哪些部分+没改的原因"(intellisense-report),不再固定一句话
         context.subscriptions.push(vscode.commands.registerCommand("ROS2.regenerateIntellisenseConfig", async () => {
             if (!intellisenseConfig) {
                 // 未装配(工作区未就绪/激活尚未走到装配段):如实告知,不谎报成功
@@ -220,34 +236,42 @@ export async function activate(context: vscode.ExtensionContext) {
                     "ROS 2 IntelliSense configuration is not initialized yet; cannot regenerate (make sure a ROS 2 workspace is open)."));
                 return;
             }
-            await intellisenseConfig.sync();
-            void vscode.window.showInformationMessage(vscode.l10n.t(
-                "ROS 2 IntelliSense configuration regenerated: missing entries have been filled into c_cpp_properties.json / .clangd / settings.json (python)."
-            ));
+            const outcome = await intellisenseConfig.sync();
+            if (outcome.outcome === "applied") {
+                void vscode.window.showInformationMessage(renderSyncReportMessage(outcome.report));
+            } else if (outcome.reason === "env") {
+                void vscode.window.showWarningMessage(vscode.l10n.t(
+                    "No usable ROS 2 environment detected; IntelliSense configuration generation skipped."));
+            } else {
+                void vscode.window.showWarningMessage(vscode.l10n.t(
+                    "No ROS 2 packages in the workspace and empty-workspace generation is off (ROS2.env.allowEmptyWorkspace); IntelliSense configuration generation skipped."));
+            }
         }));
-        // 环境变化(门槛)→ 注册判定同步(有环境才可能注册)
-        // 2026-09-04(系统/定时解耦):环境变化同时触发 package-core 系统包列表刷新——
-        // system 域只随底层 ros2/ env 变化刷新(refreshSystem),60s 定时器不再调用 pkg list;
-        // 2026-09-13(手稿 §10 对齐):env 驱动 = system 事件必发——列表未变也回推(见 api 注释);
-        // env 不可用时跳过(避免无意义执行:失败只会保持旧值 + 刷错误日志)。
-        onDidChangeEnv(() => {
+
+        // A11 事件接线(先于检测注册,门开/关事件不漏;reconcileGated 在 B 段定义,闭包活绑定)
+        // 环境变化(门槛)→ 任务提供器注册同步 + context key 刷新 + 门开热启动(reconcile)
+        // 2026-09-04(系统/定时解耦):env 驱动 = system 事件必发(env 不可用时跳过 refreshSystem)。
+        context.subscriptions.push(onDidChangeEnv(() => {
             packageCore?.buildTaskProviderGate.sync();
+            // 2026-10-17:ros2.hasRosEnvironment 随 env 翻转即时刷新
+            void environment.refreshContextKeys();
             if (environmentFacade.getEnvIssue() === null) {
                 void packageCore?.refreshSystem();
-            }
-        });
-        // 空构建倾向配置变化 → 注册判定同步(原 register.ts allowEmptyWorkspace 监听,移入上层编排)
-        context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration("ROS2.build.allowEmptyWorkspace")) {
-                packageCore?.buildTaskProviderGate.sync();
+                void reconcileGated(); // P2:门开(含恢复)热启动门内组件 + 补扫
             }
         }));
-        // 扫描取数配置变化(search.followSymlinks / search.walkTimeouts / search.excludeFolders / packages.refreshMs)
-        // → 5s 去抖 → packageCore.reconfigure 重下发(生效时机一致化,2026-09-28 批次 4;
-        // 注入值对象、断环不变;cache.updateConfig 键未变不标脏,驱动层定时器按新周期重设)
+        // 空工作区倾向配置变化 → 注册判定同步(P1:键合一为 ROS2.env.allowEmptyWorkspace)
+        context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration("ROS2.env.allowEmptyWorkspace")) {
+                packageCore?.buildTaskProviderGate.sync();
+                void environment.refreshContextKeys();
+            }
+        }));
+        // 扫描取数配置变化 → 5s 去抖 → packageCore.reconfigure(2026-09-28 批次 4;
+        // 2026-10-18:监听键修为现行单数前缀 walkTimeout,旧复数键点分段匹配不命中)
         let scanConfigDebounceTimer: NodeJS.Timeout | undefined;
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-            const affectsScan = ["ROS2.search.followSymlinks", "ROS2.search.walkTimeouts", "ROS2.search.excludeFolders", "ROS2.packages.refreshMs"]
+            const affectsScan = ["ROS2.search.followSymlinks", "ROS2.search.walkTimeout", "ROS2.search.excludeFolders", "ROS2.packages.refreshMs"]
                 .some((key) => e.affectsConfiguration(key));
             if (!affectsScan) {
                 return;
@@ -261,148 +285,155 @@ export async function activate(context: vscode.ExtensionContext) {
                 packageCore?.reconfigure(readPackageCoreScanConfig());
             }, 5000);
         }));
+        // 构建信号 → 共享 build-map 中心刷新(P2/P3:门关置旗待 reconcile 补扫,不扫描)
+        let pendingBuildScan = false;
+        context.subscriptions.push(environmentFacade.onBuildSignal(() => {
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (root === undefined) {
+                return;
+            }
+            if (environmentFacade.getEnvIssue() !== null) {
+                pendingBuildScan = true; // 门关:不扫描,记待办(门开 reconcile 补一次)
+                return;
+            }
+            void acquireSharedBuildCenter(root).center.refreshAfterBuildSignal();
+        }));
 
-        // Set explicit platform context keys for walkthrough visibility.
-        const isLinuxHost = process.platform === "linux";
-        const isWindowsHost = process.platform === "win32";
-        const isMacHost = process.platform === "darwin";
-        await Promise.all([
-            vscode.commands.executeCommand("setContext", "ros2.isLinuxHost", isLinuxHost),
-            vscode.commands.executeCommand("setContext", "ros2.isWindowsHost", isWindowsHost),
-            vscode.commands.executeCommand("setContext", "ros2.isMacHost", isMacHost),
-        ]);
+        /* ════════ P2 环境检测(此前一切为壳;有环境机器典型 1-3s,无环境毫秒级快速失败)════════ */
+        await environmentFacade.activateEnvironment(context);
 
-        // Log extension activation
-        log.info("ROS 2 extension is activating...");
-        log.debug(vscode.l10n.t("Platform context: linux={0}, windows={1}, mac={2}", isLinuxHost, isWindowsHost, isMacHost));
+        /* ════════ P2 阶段 B:构造 + reconcile 段(环境真相已知)════════ */
+
+        // B1 统一门 + package-core(构造零副作用;门开才显式 start:timer/watcher/首扫)
+        const gateGetters = {
+            envAvailable: () => environmentFacade.getEnvIssue() === null,
+            hasPackages: () => (packageCore?.getState().workspace?.length ?? 0) > 0,
+            allowEmptyWorkspace: () =>
+                vscode_utils.getExtensionConfiguration().get<boolean>("env.allowEmptyWorkspace", false),
+        };
+        const sharedGate = createGateService(gateGetters);
+        packageCore = createPackageCore({
+            workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            enableWatcher: true,
+            config: readPackageCoreScanConfig(),
+            buildTaskProviderGate: {
+                ...gateGetters,
+                registerBuildTaskProvider: () => registerBuildTaskProvider(),
+            },
+        });
+        context.subscriptions.push({ dispose: () => packageCore?.dispose() });
+        if (envGate()) {
+            packageCore.start(); // 门开:驱动层通电 + 首扫;门关待 reconcile(环境事件)再启
+        }
+        // P2/P3:build 中心查询兜底的环境门(ensureFresh 入口;组合根注入,install-truth 零 ros2 依赖)
+        setEnsureFreshGate(envGate);
+
+        // B2 包变化(门控)→ 任务提供器注册同步 + 包 context key 反应式更新
+        const syncHasPackageXmlContext = (): void => {
+            const hasPackages = (packageCore?.getState().workspace?.length ?? 0) > 0;
+            void vscode.commands.executeCommand("setContext", "ros2.hasPackageXml", hasPackages);
+        };
+        packageCore.onDidChange(() => {
+            packageCore?.buildTaskProviderGate.sync();
+            syncHasPackageXmlContext();
+        });
+        syncHasPackageXmlContext(); // 启动初始设置(首载扫描完成前为 false,完成后 onDidChange 翻转)
+
+        // B3 intellisense-config 直连装配(数据消费者;P1:注入统一门 sharedGate)
+        intellisenseConfig = createIntellisenseConfig({
+            workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
+            getState: () => packageCore!.getState(), // packageCore 已在上面赋值(同一激活流程),箭头函数闭包捕获不 narrowing,非空断言
+            environment: environmentFacade,
+            gate: sharedGate,
+        });
+        intellisenseConfig?.subscribe(packageCore.onDidChange);
+        context.subscriptions.push({ dispose: () => intellisenseConfig?.dispose() });
+
+        // B4 安装布局信号 → 配置重算(回调内 sync 自有环境门,门关零写盘)
+        {
+            const layoutWsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (layoutWsRoot) {
+                context.subscriptions.push(registerInstallLayoutWatch({
+                    workspaceRoot: layoutWsRoot,
+                    logger: log,
+                    pollIntervalMs: 0,
+                    onLayoutSignal: (reason: string) => {
+                        log.info(vscode.l10n.t("Config recompute signal: {0} -> regenerating IntelliSense configuration", reason));
+                        void intellisenseConfig?.sync();
+                    },
+                }));
+            }
+        }
+
+        // B5 reconcileGated(P2 核心):门开才执行的组件启动/补扫;onDidChangeEnv 与激活尾部共用。
+        // 顺序=环境门→core.start→refreshSystem→seed→PackageMap 链→ensureInitialized→语言三域/测试 start→build 中心首扫/补扫。
+        let gatedChainWired = false;
+        let buildScanDone = false;
+        const reconcileGated = async (): Promise<void> => {
+            packageCore?.buildTaskProviderGate.sync();
+            void environment.refreshContextKeys();
+            if (!envGate()) {
+                return; // 门关:不启动任何门内组件(reload-prompt 会建议重载;暂不=惰性兜底)
+            }
+            if (packageCore && !gatedChainWired) {
+                gatedChainWired = true;
+                // core → PackageMap 事件链(工作区/系统域变化喂入共享 PackageMap;仅启动后接线,防未初始化扫描)
+                packageCore.onDidChange(ev => {
+                    if (ev.workspace !== undefined) {
+                        void xacroPackages.refreshWorkspace();
+                    }
+                    if (ev.system !== undefined) {
+                        xacroPackages.acceptSystem(ev.system);
+                    }
+                });
+            }
+            if (packageCore) {
+                await packageCore.refreshSystem();
+                const seedSystem = packageCore.getState().system;
+                if (seedSystem) {
+                    xacroPackages.acceptSystem(seedSystem);
+                }
+            }
+            await xacroPackages.ensureInitialized(); // 共享 PackageMap(幂等单飞;内部可能等 core 首扫)
+            void rosmsgDomain.start();
+            void xacroDomain.start();
+            void launchDomain.start();
+            rosTestProvider?.start();
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (root !== undefined && (!buildScanDone || pendingBuildScan)) {
+                buildScanDone = true;
+                pendingBuildScan = false;
+                void acquireSharedBuildCenter(root).center.refreshAfterBuildSignal();
+            }
+        };
+
+        // B6 激活尾部 reconcile(环境门开:热启动一切门内组件;门关:仅 task provider 同步,等待环境事件)
+        await reconcileGated();
+
+        // B7 配置生成首算(内部自有环境门:门关 skipped 零写盘)
+        await intellisenseConfig?.sync();
+
+        // B8 欢迎演练(不依赖 env 结果;包探测为已知豁免)
+        await onboarding.showWelcomeIfNeeded(context);
+
+        return {
+            getEnv: environment.getEnv,
+            onDidChangeEnv: environment.onEnvChanged,
+        };
 
     } catch (error) {
         log.error(vscode.l10n.t("Extension activation failed: {0}", error instanceof Error ? (error.stack ?? error.message) : String(error)));
         throw error;
     }
-
-    // Keep workspace visibility context updated.
-    // (2026-09-28 批次 4:listeners.ts 已整体退役删除——其数据层监听 2026-08-28 即移交 package-core 驱动层)
-    // 系统层 shell 配置监听(P3-3)与全部环境监听(overlay/工作区文件夹/配置变化):环境域内部统一注册
-    environment.registerEnvironmentListeners(context);
-
-    // Activate components which don't require the ROS env.
-    context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider(
-        "cpp", new cpp_formatter.CppFormatter()
-    ));
-
-    // 共享 PackageMap 实例(语言域共用:xacro 持有 / launch 复用 / rosmsg 定义查找复用;
-    // 事件驱动刷新见下方两大方向,06 §0.3)
-    const xacroPackages = new PackageMap();
-
-    // Register ROS message language providers (Definition and Hover)
-    context.subscriptions.push(...registerRosMessageProviders(context, xacroPackages));
-
-    // Register xacro structure providers (go-to-definition)
-    context.subscriptions.push(...registerXacroProviders(xacroPackages));
-
-    // 事件链(2026-09-04 定稿,ros2 → core → PackageMap → rosmsg):
-    // ① 方向①(系统包名单):env 变化 → core.refreshSystem()(:195,独立入口只刷 system 域;列表未变也必发)
-    //    → core 发 ev.system(环境回推) → 此处喂入共享 PackageMap(acceptSystem,名单 = core.system 域,不再自调 pkg list)
-    //    → PackageMap fire onSystemListChanged(含未变回推) → rosmsg 重建系统消息索引;
-    // ② 方向②(工作区包表):core.onDidChange ev.workspace → refreshWorkspace(2026-09-03 G2/X-F1 修复)。
-    packageCore.onDidChange(ev => {
-        if (ev.workspace !== undefined) {
-            void xacroPackages.refreshWorkspace();
-        }
-        if (ev.system !== undefined) {
-            xacroPackages.acceptSystem(ev.system);
-        }
-    });
-    // 种子:若 core.system 域已就绪(如激活前已 source 过),立即喂入,避免等下一次环境事件
-    const seedSystem = packageCore.getState().system;
-    if (seedSystem) {
-        xacroPackages.acceptSystem(seedSystem);
-    }
-
-    // Register launch language providers (launch.py include + XML link)
-    context.subscriptions.push(...registerLaunchProviders(xacroPackages));
-
-    // 2026-09-07:ROS 2 Python 节点片段动态注入(替代退役的静态 snippets/python.json;排除 *.launch.py;ROS 工作区门槛)
-    context.subscriptions.push(registerRosPythonCompletion());
-    // 2026-09-07:ROS 2 C++ 节点片段动态注入(替代退役的静态 snippets/cpp.json;ROS 工作区门槛)
-    context.subscriptions.push(registerRosCppCompletion());
-
-    // Initialize ROS 2 test provider (once during extension activation, not on environment changes)
-    rosTestProvider = new RosTestProvider();
-    context.subscriptions.push(rosTestProvider);
-
-    // 2026-09-21:侧边栏(install-truth 三区 lib/import/share/include;简易版 —— 展开时惰性刷新 + 一个刷新命令)
-    // 2026-09-25(第五批):注入 packageCore 数据源 —— 包节点右键"构建此包"复用 build 域单包构建
-    context.subscriptions.push(...registerInstallTruthSidebar(context, packageCore));
-
-    // 2026-09-30:构建事件化(手工重设计/13)—— 环境域专供信号 → 数据中心主动刷新。
-    // 幂等由 center 保证(单飞+合并);已就绪走 rc-mtime 增量门(单包构建只重扫 1 包,实测 ≈69ms/包)。
-    // 激活后台首扫:有工作区即触发一次(未就绪 → 全量首扫,真实规模 ≈1s 后台无感;
-    // 与"首个取用方查询兜底"双路 —— 超大工作区首扫期间查询端 ensureFresh 照常可用)。
-    context.subscriptions.push(environmentFacade.onBuildSignal(() => {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (root !== undefined) {
-            void acquireSharedBuildCenter(root).center.refreshAfterBuildSignal();
-        }
-    }));
-    {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (root !== undefined) {
-            void acquireSharedBuildCenter(root).center.refreshAfterBuildSignal();
-        }
-    }
-
-    // 2026-08-28:Launch Tree Provider 已废弃注释(launch-tree 废弃模块),注册移除。
-
-    // 命令注册已拆分至 src/commands(registerAllCommands 统一入口)
-    commands.registerAllCommands(context);
-
-    // 2026-08-31(#4 方案 B):colcon 命令直连注入数据源(packageCore 实例 activate 上方已创建;不再经 commands 转发/反取全局)
-    registerColconCommands(context, packageCore);
-
-    // 2026-09-25:run/launch 命令(ROS2.run / ROS2.launch,注册者自 registry/core 换为 run 域;
-    // 数据源 = install-truth 共享数据中心,与侧边栏/测试侧同实例)
-    context.subscriptions.push(...registerRosRunCommands(context, createInstallTruthRunDataSource()));
-
-    // 2026-09-01:create 命令直连(右键生成功能包,经 create/index.ts 出口;不再经 commands/index.ts 转发)
-    registerCreatePackageCommands(context);
-
-    // 2026-09-04:config 除 gen 外断电——01 一键配置命令(ROS2.configureFile)不再注册(package.json 贡献同步移除)
-
-    // 注册"ROS 2 环境"终端配置文件(新建终端下拉框可选,复用 getEnv() 注入环境)
-    rosTerminalProfile.registerRosTerminalProfileProvider(context);
-
-    // 2026-08-31:setActivationDeps(isROSBuildTask)注入已移除——onDidEndTask 链废弃,
-    // overlay 刷新与 compile_commands 合并均由 install/** watcher 驱动(见 ros2/environment/README.md)
-
-    // RosApiDeps 注入:environment 通过接口使用状态栏监控能力,不静态依赖实现
-    environment.setRosApiDeps({
-        activateCoreMonitor: () => {
-            const item = new StatusBarItem();
-            item.activate();
-            return item;
-        },
-    });
-
-    // Activate the workspace environment if possible.
-    await environmentFacade.activateEnvironment(context);
-
-    // 启动后:门控编排执行一次(门槛 && (门户 || 倾向)→ 注册/注销任务提供器)+ 配置生成(0→1)
-    packageCore?.buildTaskProviderGate.sync();
-    await intellisenseConfig?.sync();
-
-    // Show welcome walkthrough on first install or if ROS is not detected
-    await onboarding.showWelcomeIfNeeded(context);
-
-    return {
-        getEnv: environment.getEnv,
-        onDidChangeEnv: environment.onEnvChanged,
-    };
 }
 
 
-
+/* ════════ P2 前置说明(阶段 A/B 的依赖依据)════════
+ * - setRosApiDeps 必须先于检测:检测内 reconcile 调 activateCoreMonitor,后置=首次装配拿 no-op。
+ * - 命令壳/语言域/测试域注册零后台:start 化后构造即注册点,门开才显式 start。
+ * - 仅两处闭包捕获需 getter(colcon 命令 data / 侧边栏 data),其余皆调用时活读(考据 2026-10-18)。
+ * - onDidChangeEnv 在 A 段注册:检测期间 packageCore 为 null,回调可空跑;B 段 reconcile 显式补偿首轮。
+ * ═══════════════════════════════════════════════ */
 
 
 
@@ -422,10 +453,3 @@ export async function deactivate() {
 
 // 2026-08-28:ensureErrorMessageOnException 下沉至 error-utils(断 registry → extension 反向依赖),此处 re-export 兼容既有消费方
 export { ensureErrorMessageOnException } from "./error-utils";
-
-
-
-/**
- * 加载 ROS 与工作区环境。已拆分至 src/environment/source.ts(environmentSource.sourceRosAndWorkspace)。
- */
-

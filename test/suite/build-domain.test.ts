@@ -11,6 +11,8 @@ import * as vscode from "vscode";
 import { ColconProvider, COLCON_TASK_TYPE } from "../../src/build-tool/package-service/build/colcon-task-provider";
 import { resolveInstallType } from "../../src/build-tool/package-service/build/install-type";
 import { expandColconBuild, readColconBuildSpec } from "../../src/build-tool/package-service/build/share-spec";
+// 2026-10-18(P1+P5):resolveTask 增环境门——正路径播种可用环境,用后复位
+import * as envState from "../../src/ros2/environment/state";
 
 describe("build/ share-spec(设置模板 → 命令行)", () => {
     it("未配置时读到出厂默认模板(含命令名与四个变量)", () => {
@@ -49,24 +51,37 @@ describe("build/ ColconProvider.resolveTask(响应式解析)", () => {
         assert.strictEqual(provider.resolveTask(task), undefined);
     });
 
-    it("colcon 定义 → 解析为带 ShellExecution 的任务(定义 command/args 保留、type 保留)", () => {
-        const definition = { type: COLCON_TASK_TYPE, command: "colcon", args: ["build", "--packages-select", "pkg_a"] };
-        const task = new vscode.Task(definition, vscode.TaskScope.Workspace, "构建", "colcon");
-        task.problemMatchers = ["$colcon-gcc"];
-        task.isBackground = true;
+    it("colcon 定义 → 解析为带 ShellExecution 的任务(定义 command/args 保留、type 保留)", async function () {
+        // 2026-10-18(P1+P5):resolveTask 增环境门——正路径播种可用环境,用后复位
+        envState.setEnv({ ROS_DISTRO: "humble", ROS_VERSION: "2", PATH: "/usr/bin", AMENT_PREFIX_PATH: "/opt/ros/humble" });
+        try {
+            const definition = { type: COLCON_TASK_TYPE, command: "colcon", args: ["build", "--packages-select", "pkg_a"] };
+            const task = new vscode.Task(definition, vscode.TaskScope.Workspace, "构建", "colcon");
+            task.problemMatchers = ["$colcon-gcc"];
+            task.isBackground = true;
 
-        const resolved = provider.resolveTask(task) as vscode.Task;
-        assert.ok(resolved, "应返回解析后任务");
-        // 执行体:ShellExecution(命令/参数原样传入,带 ROS 环境)
-        assert.ok(resolved.execution instanceof vscode.ShellExecution, "execution 应为 ShellExecution");
-        // 定义保留(command/args 原样,type 保持 colcon)
-        const def = resolved.definition as any;
-        assert.strictEqual(def.command, "colcon");
-        assert.deepStrictEqual(def.args, ["build", "--packages-select", "pkg_a"]);
-        assert.strictEqual(def.type, COLCON_TASK_TYPE);
-        // 继承 problemMatchers / isBackground
-        assert.deepStrictEqual(resolved.problemMatchers, ["$colcon-gcc"]);
-        assert.strictEqual(resolved.isBackground, true);
+            const resolved = await provider.resolveTask(task) as vscode.Task;
+            assert.ok(resolved, "应返回解析后任务");
+            // 执行体:ShellExecution(命令/参数原样传入,带 ROS 环境)
+            assert.ok(resolved.execution instanceof vscode.ShellExecution, "execution 应为 ShellExecution");
+            // 定义保留(command/args 原样,type 保持 colcon)
+            const def = resolved.definition as any;
+            assert.strictEqual(def.command, "colcon");
+            assert.deepStrictEqual(def.args, ["build", "--packages-select", "pkg_a"]);
+            assert.strictEqual(def.type, COLCON_TASK_TYPE);
+            // 继承 problemMatchers / isBackground
+            assert.deepStrictEqual(resolved.problemMatchers, ["$colcon-gcc"]);
+            assert.strictEqual(resolved.isBackground, true);
+        } finally {
+            envState._resetForTest();
+        }
+    });
+
+    it("无可用环境 → undefined 不解析(P1+P5 环境门:不弹窗,VS Code 契约内拒绝)", async function () {
+        envState._resetForTest(); // 无 env = 门槛关
+        const definition = { type: COLCON_TASK_TYPE, command: "colcon", args: ["build"] };
+        const task = new vscode.Task(definition, vscode.TaskScope.Workspace, "构建", "colcon");
+        assert.strictEqual(await provider.resolveTask(task), undefined);
     });
 });
 

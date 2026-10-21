@@ -19,6 +19,18 @@
  * → **合法**(README §2.2「域包含性」),而带出来的文件就是**事实**:源码目录里有什么,
  * import 面就有什么。`agreement === "observed"` 档记录的就是这类"记录里没有、实际存在"的东西。
  *
+ * ## Form B(develop/egg-link,2026-10-16 补采)
+ *
+ * 实机(colcon humble + ament_python)的 develop 形态并非上述目录链,而是 **egg-link 文件**:
+ * site 顶层只有 `<dist>.egg-link` 记账文件(setuptools develop 写入,两行 = dev 目录 + top-level;
+ * 解释器不读取,纯 pip/setuptools 记账),真正的生效链 = colcon develop 钩子
+ * (`build/<pkg>/share/<pkg>/hook/pythonpath_develop.dsv`)把 `build/<pkg>` 塞进 PYTHONPATH
+ * → `build/<pkg>/<pkg>`(→src 镜像链)。此前只走 `site/<pkg>/` 子树,Form B 的导出面整区蒸发。
+ * 现补采:egg-link 解析出 dev 目录(**必须 === 本包 buildDir**,域包含性)后按 top-level 遍历
+ * build 镜像 → import 区行(经根链进入,viaLink 指向 src,链形态行);egg-link 文件自身收录为
+ * generated 灰类行。**语义分层**:报警挂生效层(镜像链丢 → 消失行合成 missing/悬空),
+ * 记账层(egg-link)静默——丢失无感,零报警。
+ *
  * 纯 TS,零依赖,可无头测试。
  */
 
@@ -87,7 +99,7 @@ const GENERATED_TOP_DIRS = new Set(["hook", "environment", "cmake"]);
 const GENERATED_FILE_RE = /^(package\.(bash|sh|zsh|ps1|dsv|xml)|local_setup\..*)$/;
 
 /**
- * 约定性生成物判定(**标记,不过滤**):`__pycache__` / `*.egg-info` /
+ * 约定性生成物判定(**标记,不过滤**):`__pycache__` / `*.egg-info` / `*.egg-link` /
  * `share/<pkg>/{hook,environment,cmake}/**` / `share/<pkg>/package.*` / `local_setup.*`。
  */
 export function isConventionGenerated(area: AreaName, relPath: string): boolean {
@@ -97,6 +109,9 @@ export function isConventionGenerated(area: AreaName, relPath: string): boolean 
     }
     if (segs.some((s) => s.endsWith(".egg-info"))) {
         return true;
+    }
+    if (segs.some((s) => s.endsWith(".egg-link"))) {
+        return true; // setuptools develop 记账文件(Form B,2026-10-16):灰类,丢失无感
     }
     if (area !== "share") {
         return false;
@@ -222,6 +237,53 @@ async function pythonSiteRoots(fs: FsLike, prefix: string): Promise<string[]> {
                 out.push(site);
             }
         }
+    }
+    return out;
+}
+
+/** site 顶层的 `*.egg-link` 记账文件(Form B develop 声明;2026-10-16) */
+interface EggLinkInfo {
+    /** 绝对路径(install 侧) */
+    path: string;
+    fileName: string;
+    /** 第一行:开发目录(setuptools develop 的安装位置) */
+    devDir: string;
+    /** 第二行按空白分;`.` 原样保留,由调用方按包名解析 */
+    topLevelsRaw: string[];
+}
+
+async function eggLinksInSite(fs: FsLike, site: string): Promise<EggLinkInfo[]> {
+    const names = await fs.readdir(site);
+    if (names === undefined) {
+        return [];
+    }
+    const out: EggLinkInfo[] = [];
+    for (const name of names.slice().sort()) {
+        if (!name.endsWith(".egg-link")) {
+            continue;
+        }
+        const p = pjoin(site, name);
+        const ls = await fs.lstat(p);
+        if (ls === undefined || ls.kind !== "file") {
+            continue;
+        }
+        const text = await fs.readText(p);
+        if (text === undefined) {
+            continue;
+        }
+        const lines = text
+            .split(/\r?\n/)
+            .map((s) => s.trim())
+            .filter((s) => s !== "");
+        if (lines.length < 2 || lines[0] === "") {
+            continue; // 形状不对(截断/空文件)→ 不猜,跳过
+        }
+        out.push({
+            path: p,
+            fileName: name,
+            devDir: lines[0],
+            topLevelsRaw: lines[1].split(/\s+/).filter((s) => s !== ""),
+        });
     }
     return out;
 }
@@ -462,16 +524,70 @@ async function collectPackageAreas(
     for (const site of await pythonSiteRoots(fs, prefix)) {
         const sub = prelative(site, prefix) ?? "lib/pythonX/site-packages";
         raws.push.apply(raws, await collectDir(fs, pjoin(site, pkg.name), `${sub}/${pkg.name}`, "import"));
+        // Form B(develop/egg-link,2026-10-16,见文件头):site 顶层 `<dist>.egg-link` 记账文件
+        // 指向开发目录(= build/<pkg>),生效链 = develop 钩子把 build/<pkg> 塞进 PYTHONPATH →
+        // build/<pkg>/<pkg>(→src 镜像链)。此前只走 site/<pkg>/ 子树,Form B 导出面整区蒸发。
+        for (const link of await eggLinksInSite(fs, site)) {
+            // 记账文件自身收录:**无条件**(它是 install 树里的观察事实,无域门可言);
+            // generated 灰类(解释器不读取,丢失无感——语义分层见文件头)
+            raws.push({
+                relToPrefix: `${sub}/${link.fileName}`,
+                relPath: link.fileName,
+                installPath: link.path,
+                area: "import",
+                link: false,
+                dangling: false,
+            });
+            const devDir = pnormalize(link.devDir);
+            if (devDir !== pkg.buildDir) {
+                // 域门(只管 dev 目录的遍历):必须就是本包 buildDir(merged 布局下 site 共享,
+                // 防吃进它包);出 build/ = 域外,拒收并留痕(域包含性);build/ 内非本包 = 静默
+                // (它包自己的轮次会收)
+                if (devDir !== ctx.buildRoot && !devDir.startsWith(ctx.buildRoot + "/")) {
+                    warnings.push(l10n.t("{0}: egg-link dev dir outside build/ ignored: {1}", pkg.name, link.devDir));
+                }
+                continue;
+            }
+            let topLevels: string[];
+            if (link.topLevelsRaw.includes(".")) {
+                // 第二行为 "."(colcon 实机常态):真顶层名在 egg-info top_level.txt(setuptools 标准工件)。
+                // 包名≠模块目录名的合法布局若仍回退包名,import 区整区蒸发(2026-10-20 jazzy 实测
+                // ros2w_ops_python,模块目录 ros2w_ops);读不到/为空 → 退回包名(经典布局目录恰好同名)。
+                const tlText = hasEggInfo
+                    ? await fs.readText(pjoin(pkg.buildDir, pkg.name + ".egg-info", "top_level.txt"))
+                    : undefined;
+                const fromArtifact = Array.from(
+                    new Set(
+                        (tlText ?? "")
+                            .split(/\r?\n/)
+                            .map((s) => s.trim())
+                            .filter((s) => s !== "")
+                    )
+                );
+                topLevels = fromArtifact.length > 0 ? fromArtifact : [pkg.name];
+            } else {
+                topLevels = link.topLevelsRaw;
+            }
+            for (const tl of topLevels) {
+                const dir = pjoin(devDir, tl);
+                if (await isDir(fs, dir)) {
+                    // 经根链进入(walkArea 根检测记 viaLink → src):链形态行,丢失走消失行合成
+                    raws.push.apply(raws, await collectDir(fs, dir, `develop/${tl}`, "import"));
+                }
+            }
+        }
     }
     raws.push.apply(raws, await collectDir(fs, pjoin(prefix, "share", pkg.name), `share/${pkg.name}`, "share"));
     raws.push.apply(raws, await collectDir(fs, pjoin(prefix, "include", pkg.name), `include/${pkg.name}`, "include"));
 
-    /** 源落点解析(顺序:跳转记录 → 安装规则 → ament_python 根映射);sourceRef 供悬浮栏可逆搜索(第五批) */
+    /** 源落点解析(顺序:跳转记录 → develop 镜像链 → 安装规则 → ament_python 根映射);sourceRef 供悬浮栏可逆搜索(第五批) */
     const resolveSource = (
         area: AreaName,
         relToPrefix: string,
         relPath: string,
-        installPath: string
+        installPath: string,
+        viaLinkTarget?: string,
+        viaLinkDomain?: AreaFile["viaLinkDomain"]
     ): { sourcePath?: string; sourceEvidence?: AreaFile["sourceEvidence"]; sourceRef?: string } => {
         if (pkgJumps !== undefined) {
             for (const e of pkgJumps) {
@@ -481,6 +597,15 @@ async function collectPackageAreas(
                 }
             }
         }
+        if (area === "import" && viaLinkDomain === "src" && viaLinkTarget !== undefined) {
+            // develop/目录链行:镜像链目标是安装机制自己声明的源落点,优先于形状拼装 ——
+            // 包名≠模块目录名时 rootmap 会拼出不存在的 src/<pkg>/<pkg>/…(→ 假 sourceMissing)
+            return {
+                sourcePath: pjoin(viaLinkTarget, relPath),
+                sourceEvidence: "develop-link",
+                sourceRef: l10n.t("develop mirror link (egg-link → src)"),
+            };
+        }
         const fromRule = sourceFromRulesRef(rules, relToPrefix);
         if (fromRule !== undefined) {
             return { sourcePath: fromRule.path, sourceEvidence: "install-rule", sourceRef: l10n.t("install rule {0}", fromRule.from) };
@@ -488,6 +613,11 @@ async function collectPackageAreas(
         if (hasEggInfo) {
             // 根映射(**纯字符串拼装,不访问 src/**):site-packages/<pkg>/ ↔ src/<pkg>/<pkg>/;share/<pkg>/ ↔ src/<pkg>/
             if (area === "import") {
+                if (relPath.endsWith(".egg-link")) {
+                    // 记账文件无源:防 rootmap 捏造不存在的源路径(→ sourceMissing 误标);
+                    // 给中性来源说明(语义分层:记账层,解释器不读取,丢失无感)
+                    return { sourceRef: l10n.t("setuptools develop declaration (egg-link; bookkeeping, not read by the interpreter)") };
+                }
                 return {
                     sourcePath: pjoin(ctx.srcRoot, pkg.name, pkg.name, relPath),
                     sourceEvidence: "python-rootmap",
@@ -512,7 +642,6 @@ async function collectPackageAreas(
             continue;
         }
         seen.add(raw.relToPrefix);
-        const src = resolveSource(raw.area, raw.relToPrefix, raw.relPath, raw.installPath);
         const followed = await fs.stat(raw.installPath); // 权限位:软链必须看**目标**(链自身模式无意义)
         const linkDomain =
             raw.linkTarget === undefined ? undefined : domainOf(ctx, raw.installPath, raw.linkTarget);
@@ -520,6 +649,14 @@ async function collectPackageAreas(
             raw.viaLinkPath === undefined || raw.viaLinkTarget === undefined
                 ? undefined
                 : domainOf(ctx, raw.viaLinkPath, raw.viaLinkTarget);
+        const src = resolveSource(
+            raw.area,
+            raw.relToPrefix,
+            raw.relPath,
+            raw.installPath,
+            raw.viaLinkTarget,
+            viaLinkDomain
+        );
         // 残留判定(2026-10-14,用户裁定):仅 lib 区 —— install/ 里真实存在但**最近一次构建的声明已不认**
         // (清单/安装规则/jumps 三处查无;典型 = setup.py 入口被注释后的旧包装器、改名前的旧 elf)。
         // import 区豁免:develop/egg-link 行天然无 per-file 记录,是常态不是残留。

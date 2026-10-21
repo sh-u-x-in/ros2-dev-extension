@@ -42,6 +42,7 @@ function makeFetcher(): { fetcher: PackageFetcher; fire: (ev: DriverEvent) => vo
     const em = new Emitter<DriverEvent>();
     return {
         fetcher: {
+            start: () => undefined,
             onExternalChange: (cb) => em.on(cb),
             setRefreshIntervalMs: () => undefined,
             dispose: () => undefined,

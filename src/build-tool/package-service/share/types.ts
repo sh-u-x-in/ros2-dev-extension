@@ -53,6 +53,12 @@ export interface CommandSpec {
     template: string;
     /** 二级弹窗第 1 项(自定义输入)的描述 */
     custom: string;
+    /**
+     * `${0}` 自定义输入框的**占位提示**(框内灰色示例文字;2026-10-18 新增,来源 = presets
+     * 裸键的 value)。可选:缺省/空 ⇒ 显示层回落调用方自备的示例;非空 ⇒ 覆盖之。
+     * 非出厂 spec 成员(序列化/同步锁不含),仅经 presets 键值表裸键流入。
+     */
+    customHint?: string;
     /** 槽位表:第 n 个元素 ↔ 模板里的 `${n}`;元素可以是单条,也可以是"该槽的多条备选" */
     argv_list: readonly ArgSlot[];
 }

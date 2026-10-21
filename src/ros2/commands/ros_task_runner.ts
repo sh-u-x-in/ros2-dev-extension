@@ -18,6 +18,12 @@
  * 2026-09-25(run 域接线):**run/launch 同样收成"只执行 argv"**(`Ros2RunOptions` / `Ros2LaunchOptions`,
  *   对齐 colcon_build 模式)—— 旧 `toRos2RunCommand`/`toRos2LaunchCommand` 已删除,命令拼装迁往
  *   `build-tool/package-service/run/`;本层补齐 #12 环境门槛(运行场景 env 仍用含 overlay 的 `getEnv()`)。
+ * 2026-10-17(真多实例·终版,替代同日作废的唯一名方案):run/launch 任务携带
+ *   `runOptions { instancePolicy: "silent", instanceLimit: RUN_INSTANCE_LIMIT }` —— 同一可执行/launch
+ *   已有实例在跑时**不弹窗、不终止,静默放行新实例**(各自独立终端,workbench 按任务原生多实例计数);
+ *   同名终端是前提(#N 前缀原生不可行)——实测任务身份分组 task.getKey() 忽略名字与 definition 自定义
+ *   字段,唯一名反而落入限额分支弹出"终止实例"框(110d349 方案作废,源码实证见 run/README 同日行)。
+ *   build 不参与(并发构建有害)。
  */
 
 import { l10n } from "vscode";
@@ -63,7 +69,7 @@ export function toRosdepCommand(opts?: { workspace?: string }): string[] {
 
 /** ros2 doctor 命令行 */
 export function toDoctorCommand(): string[] {
-    return ["doctor"];
+    return ["doctor", "--report"];
 }
 
 /* ================================================================== */
@@ -83,7 +89,7 @@ async function colcon_build(opts: ColconBuildOptions): Promise<void> {
     // 命令来源(2026-09-22 接线):调用方(build/ 的模板引擎)按设置展开成整条 argv 传进来 ——
     // 命令名与参数都在里面,本层只执行。空 argv = 模板展开为空(配置问题)⇒ 明确报错,不启动终端。
     if (opts.argv.length === 0) {
-        showErrorMessage(l10n.t("Build command expanded to empty; cancelled. Check the template in setting ROS2.build.shareSpec."));
+        showErrorMessage(l10n.t("Build command expanded to empty; cancelled. Check the template in setting ROS2.build.template."));
         return;
     }
     // 命令内容完全由调用方(模板引擎)给:本层只做"执行",不拼装、不兜底、不认识模板/预设/记忆。
@@ -126,13 +132,13 @@ async function rosdep(opts?: { workspace?: string; argv?: string[] }): Promise<v
 
 /**
  * ros2 run 任务终端(2026-09-25 重设计:对齐 colcon_build —— 调用方(`run/share-spec.ts`)按设置里的
- * 模板(`ROS2.run.shareSpec`)展开成整条 argv 传进来,本层只执行:环境门槛 → 空 argv 拒绝 → 任务壳。
+ * 模板(`ROS2.tool.run.template`)展开成整条 argv 传进来,本层只执行:环境门槛 → 空 argv 拒绝 → 任务壳。
  * 运行场景用 `getEnv()`(含本工作区 overlay —— 运行就是要跑自己刚构建的产物)。
  */
 async function run(opts: Ros2RunOptions): Promise<void> {
     const target = [opts.pkg, opts.executable].filter((s) => s !== undefined && s !== "").join(".");
     const name = target !== "" ? l10n.t("Run {0}", target) : l10n.t("Run");
-    await executeRunArgv(opts.argv, opts.cwd, name, "ROS2.run.shareSpec");
+    await executeRunArgv(opts.argv, opts.cwd, name, "ROS2.tool.run.template");
 }
 
 /**
@@ -143,10 +149,17 @@ async function launch(opts: Ros2LaunchOptions): Promise<void> {
     // 只取文件名尾段(包名/嵌套路径不上终端名——命令内容就在终端里,不丢信息)
     const fileName = target !== "" ? target.split("/").pop()! : "";
     const name = fileName !== "" ? l10n.t("Launch {0}", fileName) : l10n.t("Launch");
-    await executeRunArgv(opts.argv, opts.cwd, name, "ROS2.launch.shareSpec");
+    await executeRunArgv(opts.argv, opts.cwd, name, "ROS2.tool.launch.template");
 }
 
-/** run/launch 共用执行底座:环境门槛(#12 唯一判定)→ 空 argv 拒绝 → runShellTask(getEnv) */
+/** run/launch 并发实例上限(workbench runOptions.instanceLimit,**默认 1** 会让第二份命中限额弹"终止实例";
+ *  放宽以允许同任务多实例并存)。 */
+const RUN_INSTANCE_LIMIT = 8;
+
+/** run/launch 共用执行底座:环境门槛(#12 唯一判定)→ 空 argv 拒绝 → runShellTask(getEnv)。
+ *  2026-10-17:run/launch **真多实例**(终版)—— 任务携带 runOptions { instancePolicy: "silent",
+ *  instanceLimit: RUN_INSTANCE_LIMIT }:同一目标已有实例在跑时**不弹窗、不终止,静默放行新实例**
+ *  (各自独立终端;策略与限额语义见 host/tasks.ts taskRunOptions 注释与 run/README 2026-10-17 行)。 */
 async function executeRunArgv(argv: string[], cwd: string | undefined, name: string, settingKey: string): Promise<void> {
     // #12 环境门槛(与 colcon_build 同一判定;运行没有环境同样注定失败,且 ros2 不在 PATH)
     const envIssue = environmentState.getEnvIssue();
@@ -161,7 +174,11 @@ async function executeRunArgv(argv: string[], cwd: string | undefined, name: str
     }
     const [command, ...args] = argv;
     log.debug(`${name}:${argv.join(" ")}`);
-    await runShellTask(name, command, args, { cwd, env: getEnv() });
+    await runShellTask(name, command, args, {
+        cwd,
+        env: getEnv(),
+        taskRunOptions: { reevaluateOnRerun: true, instancePolicy: "silent", instanceLimit: RUN_INSTANCE_LIMIT },
+    });
 }
 
 /** RosTaskRunner 实现对象(组合根注入用;接口定义在 api/ros-task-runner.ts) */

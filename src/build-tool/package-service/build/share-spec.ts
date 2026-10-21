@@ -19,6 +19,7 @@ import * as vscode from "vscode";
 import { getLogger } from "../../../logger";
 import { COLCON_BUILD_COMMAND_ID, COLCON_BUILD_SPEC, colconBuildDynamics } from "../share/defaults/colcon-build";
 import { expandCommand, mergeSpec } from "../share/expand";
+import { parsePresetsTable } from "../share/presets-table";
 import { readSelectionMemory } from "../share/selection-memory";
 import type { CommandSpec, ExpandResult } from "../share/types";
 import { resolveInstallType } from "./install-type";
@@ -26,15 +27,33 @@ import { resolveInstallType } from "./install-type";
 /** share-spec 模块日志 */
 const log = getLogger("share-spec");
 
-/** 设置键(前缀 `ROS2.` 由 getConfiguration 提供) */
-export const SHARE_SPEC_SETTING = "build.shareSpec";
+/** 设置键(前缀 `ROS2.` 由 getConfiguration 提供;2026-10-17 两拆分:shareSpec 对象键 → template + presets 两个平级键) */
+export const BUILD_TEMPLATE_SETTING = "build.template";
+export const BUILD_PRESETS_SETTING = "build.presets";
 
 /**
- * 读设置里的 spec:字段缺失回落出厂默认;**显式给空**(如 `argv_list: []`)则尊重用户(见 `mergeSpec`)。
- * 设置项整体不存在 ⇒ 整份出厂默认 == 今天的内置命令(逐字节等价,由单测锁定)。
+ * 读设置里的 spec(2026-10-17 两拆分):template 字符串键 + presets 键值表键 → 拼成 partial 形状
+ * → `mergeSpec` 与出厂默认合并。字段缺失/非串/整表报废各自回落出厂;**显式给空**(模板空串、
+ * presets 空对象 = 显式空表)则尊重用户(见 `mergeSpec` 与 presets-table.ts 容错口径)。
+ * 两键都不存在 ⇒ 整份出厂默认 == 今天的内置命令(逐字节等价,由同步锁用例锁定)。
  */
 export function readColconBuildSpec(): CommandSpec {
-    const raw = vscode.workspace.getConfiguration("ROS2").get<Partial<CommandSpec>>(SHARE_SPEC_SETTING);
+    const cfg = vscode.workspace.getConfiguration("ROS2");
+    const template = cfg.get<unknown>(BUILD_TEMPLATE_SETTING);
+    const raw: Partial<CommandSpec> = {};
+    if (typeof template === "string") {
+        raw.template = template;
+    }
+    const presets = parsePresetsTable(cfg.get<unknown>(BUILD_PRESETS_SETTING));
+    if (presets !== undefined) {
+        if (presets.custom !== undefined) {
+            raw.custom = presets.custom;
+        }
+        if (presets.customHint !== undefined) {
+            raw.customHint = presets.customHint;
+        }
+        raw.argv_list = presets.argv_list;
+    }
     return mergeSpec(raw, COLCON_BUILD_SPEC);
 }
 
@@ -78,6 +97,6 @@ export function expandColconBuild(req: ColconBuildRequest): ExpandResult {
  * 与智能构建的区别只有一处:智能构建会先弹窗让人改，这里不弹。
  */
 export async function expandColconBuildWithMemory(req: ColconBuildRequest): Promise<ExpandResult> {
-    const memory = await readSelectionMemory(req.base_path, COLCON_BUILD_COMMAND_ID);
+    const memory = await readSelectionMemory(COLCON_BUILD_COMMAND_ID);
     return expandColconBuild({ ...req, picked: memory.picked, custom: memory.custom });
 }

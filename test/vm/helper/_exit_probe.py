@@ -63,7 +63,15 @@ def connect_resync(timeout=15):
             time.sleep(0.2)
     if s is None:
         raise RuntimeError("连不上服务端")
-    req = {"client": "exitprobe", "id": 1, "time": int(time.time() * 1000),
+    # P4 握手:首帧 hello 环境指纹(服务端不匹配回 deny),通过后 resync 照旧
+    hello_env = {}
+    for _k in ("ROS_VERSION", "ROS_DISTRO", "ROS_DOMAIN_ID", "RMW_IMPLEMENTATION"):
+        _v = os.environ.get(_k)
+        hello_env[_k.lower()] = str(_v) if _v not in (None, "") else "0"
+    hello = {"client": "exitprobe", "id": 1, "time": int(time.time() * 1000),
+             "hello": {"proto": "rde-helper/1", "env": hello_env}}
+    s.sendall(json.dumps(hello).encode() + b"\n")
+    req = {"client": "exitprobe", "id": 2, "time": int(time.time() * 1000),
            "request": {"op": "resync"}}
     s.sendall(json.dumps(req).encode() + b"\n")
     f = s.makefile("r", encoding="utf-8")

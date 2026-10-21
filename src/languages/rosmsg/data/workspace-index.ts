@@ -19,6 +19,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { getLogger } from "../../../logger";
 import { walkOptions, walkWithTimeout, DEFAULT_EXCLUDED_DIR_NAMES } from "../../../build-tool/walk";
+import { isPathExcludedNormalized, resolveExcludeFoldersNormalized } from "../../../build-tool/walk/base/path-exclude";
 import {
     MSG_GLOB, WORKSPACE_CACHE_WRITE_DEBOUNCE_MS,
     RosInterfaceEntry, WorkspaceCacheFile,
@@ -29,6 +30,25 @@ import { IndexReader, IndexWriter, LOOSE_PKG, dirKey, normFile } from "./tables"
 
 /** 扩展日志薄封装(工作区子索引) */
 const log = getLogger("msg-ws-index");
+
+/** 内置产物目录段判定(模块级纯函数;类内 isProductPath 委托至此,2026-10-18 后剪枝批抽出) */
+export function isProductSegmentPath(p: string): boolean {
+    const segs = p.split("\\").join("/").split("/");
+    for (const s of segs) {
+        if (DEFAULT_EXCLUDED_DIR_NAMES.includes(s)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * 事件/增量面排除判定(模块级纯函数,2026-10-18 后剪枝批):内置目录名段(前剪枝口径)
+ * ∪ 用户排除目录(`ROS2.search.excludeFolders`,路径级后剪枝,win32 折叠)。
+ */
+export function isExcludedMsgSource(p: string, userExcludedNormalized: string[]): boolean {
+    return isProductSegmentPath(p) || isPathExcludedNormalized(p, userExcludedNormalized);
+}
 
 /** 包变化的最小原子事件(PackageMap 拆碎投递;package-map.md §5 / rosmsg-v3.md §4) */
 export interface PackageAtomEvent {
@@ -191,6 +211,11 @@ export class WorkspaceIndex {
             log.warn(l10n.t("Workspace message scan failed: no workspace root"));
             return;
         }
+        // 用户排除集(2026-10-18 后剪枝批):每轮全量刷新重解析(folders[0] 基准,win32 折叠),事件期复用缓存
+        this.userExclusions = resolveExcludeFoldersNormalized(
+            folders[0]?.uri.fsPath ?? "",
+            vscode.workspace.getConfiguration("ROS2").get<string[]>("search.excludeFolders", []),
+        );
         const files: string[] = [];
         let timedOut = false;
         const opts = walkOptions("message");
@@ -213,8 +238,10 @@ export class WorkspaceIndex {
             log.warn(l10n.t("Workspace message scan timed out (") + opts.totalTimeoutMs + l10n.t(" ms); no convergence this round: keeping old table, retry next round"));
             return;
         }
-        this.writer.rebuild(files);
-        log.debug(l10n.t("Workspace message full rebuild finished:") + " " + files.length + l10n.t(" files, read-line package count") + " " + this.reader.packageNamesWithMsg().length);
+        // 用户排除后剪枝(2026-10-18):内置名已在 walk 遍历期剪枝,此处补用户路径级过滤(双判口径与事件面一致)
+        const kept = files.filter((p) => !isExcludedMsgSource(p, this.userExclusions));
+        this.writer.rebuild(kept);
+        log.debug(l10n.t("Workspace message full rebuild finished:") + " " + kept.length + l10n.t(" files, read-line package count") + " " + this.reader.packageNamesWithMsg().length);
         this.scheduleWorkspaceCacheWrite();
     }
 
@@ -307,7 +334,7 @@ export class WorkspaceIndex {
     /** 消息增加事件(create/change/rename 一侧) */
     private async onMsgUpserted(uri: vscode.Uri): Promise<void> {
         const p = uri.fsPath;
-        if (this.isProductPath(p)) {
+        if (this.isSourceExcluded(p)) {
             log.trace(l10n.t("Skipping .msg event inside artifact dirs:") + " " + p);
             return;
         }
@@ -320,7 +347,7 @@ export class WorkspaceIndex {
     /** 消息删除事件(delete/rename 一侧;迟到删除天生 no-op) */
     private async onMsgDeleted(uri: vscode.Uri): Promise<void> {
         const p = uri.fsPath;
-        if (this.isProductPath(p)) {
+        if (this.isSourceExcluded(p)) {
             return;
         }
         await this.enqueue(() => {
@@ -336,14 +363,16 @@ export class WorkspaceIndex {
 
     /** 产物目录判定(watcher 事件无排除参数,增量面补上与 walk 同口径的默认产物目录过滤) */
     private isProductPath(p: string): boolean {
-        const segs = p.split("\\").join("/").split("/");
-        for (const s of segs) {
-            if (DEFAULT_EXCLUDED_DIR_NAMES.includes(s)) {
-                return true;
-            }
-        }
-        return false;
+        return isProductSegmentPath(p);
     }
+
+    /** 事件/增量面排除双判(2026-10-18 后剪枝批):内置名段 + 用户排除路径(排除集随全量刷新重解析) */
+    private isSourceExcluded(p: string): boolean {
+        return isExcludedMsgSource(p, this.userExclusions);
+    }
+
+    /** 用户排除目录(win32 折叠后的绝对路径;每轮全量刷新重解析,事件期复用) */
+    private userExclusions: string[] = [];
 
     /* ---------- 工作区磁盘缓存(正表快照 v4) ---------- */
 
@@ -461,7 +490,7 @@ export class WorkspaceIndex {
      */
     async enrollFile(filePath: string): Promise<void> {
         const p = normFile(filePath);
-        if (!this.isMsgUri(vscode.Uri.file(p)) || this.isProductPath(p) || !this.isInWorkspace(p)) {
+        if (!this.isMsgUri(vscode.Uri.file(p)) || this.isSourceExcluded(p) || !this.isInWorkspace(p)) {
             return;
         }
         if (this.reader.ownerOf(p) !== undefined) {

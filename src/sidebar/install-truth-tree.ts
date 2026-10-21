@@ -131,6 +131,22 @@ export interface TreeNode {
     executable?: boolean;
     /** 有则说明可展开 */
     children?: TreeNode[];
+    /** 仅文件行:区 relPath(2026-10-16;折目录后 label 是 basename,tooltip 首行要全名) */
+    name?: string;
+    /** 仅文件行:内容来源证据(2026-10-16;getTreeItem 重建 tooltip 所需) */
+    sourceEvidence?: SidebarRow["sourceEvidence"];
+    /** 仅文件行:软链形态(2026-10-16;rowTooltip 的软链合并行/形态行需要) */
+    linkDomain?: SidebarRow["linkDomain"];
+    /** 仅文件行:经上游目录软链扩大进来(2026-10-16;同上) */
+    viaLinkDomain?: SidebarRow["viaLinkDomain"];
+    /** 仅文件行:自身是软链(2026-10-16;落点修改时间取指针的判定要用它——叶子链指针=链自身) */
+    link?: boolean;
+    /** 仅文件行:经上游目录软链进入时的链路径(2026-10-16;指针本体时间的 lstat 对象) */
+    viaLinkPath?: string;
+    /** 仅文件行:生成物(2026-10-16;include 生成头的 tooltip 附加行判定需要) */
+    generated?: boolean;
+    /** 仅包节点:最近一次构建时刻(2026-10-16;rc mtime,点击探针核对的"显示值"侧) */
+    buildTimeMs?: number;
 }
 
 /** 工作区相对化(仅展示用;不在工作区内就原样给) */
@@ -139,14 +155,6 @@ export function relToWorkspace(workspaceRoot: string | undefined, p: string): st
         return p.slice(workspaceRoot.length + 1);
     }
     return p;
-}
-
-/**
- * 软链形态(2026-10-14):文件自身是软链(`linkDomain`),或经上游目录软链扩大进来(`viaLinkDomain`)——
- * 两种情况 install 路径与源路径都解析到**同一个文件**(statSync 跟随软链,同 inode),双侧 mtime 恒等。
- */
-export function isSymlinkForm(r: Pick<DisplayRow, "linkDomain" | "viaLinkDomain">): boolean {
-    return r.linkDomain !== undefined || r.viaLinkDomain !== undefined;
 }
 
 /**
@@ -187,12 +195,15 @@ export function rowTooltip(r: DisplayRow): string {
     lines.push(l10n.t("Install target: {0}", r.installPath));
     lines.push(l10n.t("Source:   {0}", r.source ?? l10n.t("(no source - this domain has no install record)")));
     // 双修改时间考古(2026-10-13,用户裁定):执行结果与原文件不符时对表——只给原始时间,不下结论。
-    // 2026-10-14 收敛(用户裁定):软链形态行 install 与源是同一文件,双行恒等纯噪音 → 合并单行;
-    // 拷贝安装行(非链)才保留双行对表(源>安装 = 陈旧,唯一有信息量的场景)。
-    if (isSymlinkForm(r)) {
-        const m = r.sourceMtimeMs ?? r.installMtimeMs;
-        if (m !== undefined) {
-            lines.push(l10n.t("Mtime: {0}", new Date(m).toLocaleString()));
+    // 2026-10-16 终版(指针/数据模型 + 两类分类,均为用户定义):
+    //   · **第一类(generated=true,自动生成:rosidl 生成头/生成 .py/egg-link 记账)**:只显示落点
+    //     (install 侧)时间——其"源"是可重生成的 build 中间物,对考古无意义(源时间行不推);
+    //   · **第二类(用户编写)**:恒双行 = 源修改时间(数据时间)+ 落点修改时间(指针本体时间,
+    //     适配层 lstat 现查):叶子链行(link=true)指针=链自身;经目录链行(link=false+viaLink)
+    //     指针=上游目录链(lstat viaLinkPath≈安装时刻);实体行指针=文件自身。
+    if (r.generated === true) {
+        if (r.installMtimeMs !== undefined) {
+            lines.push(l10n.t("Install mtime: {0}", new Date(r.installMtimeMs).toLocaleString()));
         }
     } else {
         if (r.sourceMtimeMs !== undefined) {
@@ -245,7 +256,13 @@ export function fileNodeOf(r: DisplayRow, _workspaceRoot?: string, pkg?: string)
         : rowTooltip(r);
     // 错误行徽标(2026-10-13,用户裁定):三型落点异常 = 单符号 ⚠(纯符号零文案,防多语言长度/观感问题)
     // 残留行(2026-10-14):非异常时 description 显示"旧"(l10n 文案,用户裁定)
-    const faulty = r.status === "missing" || r.dangling === true || r.sourceMissing === true;
+    // 错误行徽标(2026-10-13):missing/dangling/sourceMissing 单符号 ⚠。
+    // 2026-10-16(两类分类,用户定义):第一类(generated)豁免 C 类源缺失徽标——其"源"是可重生成的
+    // build 中间物,且点击不去那里,"跳转会失败"的语义不成立(A missing/B dangling 照常)。
+    const faulty =
+        r.status === "missing" ||
+        r.dangling === true ||
+        (r.sourceMissing === true && r.generated !== true);
     return {
         kind: "file",
         label: r.name,
@@ -264,6 +281,14 @@ export function fileNodeOf(r: DisplayRow, _workspaceRoot?: string, pkg?: string)
         installMtimeMs: r.installMtimeMs,
         executable: r.executable,
         sourceRef: r.sourceRef,
+        // 2026-10-16:适配层 getTreeItem 显示瞬间现查 mtime 后重建 tooltip 所需的行身字段
+        name: r.name,
+        sourceEvidence: r.sourceEvidence,
+        link: r.link,
+        viaLinkPath: r.viaLinkPath,
+        linkDomain: r.linkDomain,
+        viaLinkDomain: r.viaLinkDomain,
+        generated: r.generated,
     };
 }
 
@@ -412,7 +437,10 @@ export function iconPlanOf(node: TreeNode): IconPlan {
     if (node.status === "missing") {
         return { tag: "codicon", id: "error", color: "list.errorForeground" };
     }
-    if (node.sourceMissing === true) {
+    if (node.sourceMissing === true && node.generated !== true) {
+        // C 源失效 → warning 琥珀。2026-10-16(两类分类,用户定义):第一类(generated)豁免——其"源"
+        // 是可重生成的 build 中间物,且点击不去那里;build 目标丢失时自然落到下方断链分支
+        // (用户规则:"软链丢目标报断链"而非 ⚠)
         return { tag: "codicon", id: "warning", color: "editorWarning.foreground" };
     }
     if (node.dangling === true) {
@@ -589,6 +617,8 @@ export function packageNodeOf(view: SidebarPackageView, workspaceRoot?: string):
         description: `${[...attrs, l10n.t("{0} items", visibleCount)].join(" · ")}`,
         tooltip: tooltipLines.join("\n"),
         pkg: view.pkg,
+        // 构建时间下放到节点(2026-10-16):包节点点击探针拿它当"显示值",与 rc 瞬时值比对
+        buildTimeMs: view.buildTimeMs,
         children: areas.length > 0 ? areas : [{ kind: "message", label: l10n.t("(nothing to show)"), description: l10n.t("everything filtered out was generated artifacts or libs") }],
     };
 }

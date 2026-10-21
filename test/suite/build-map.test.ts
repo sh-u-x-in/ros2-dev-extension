@@ -11,7 +11,15 @@
  *   · 不变式三:**域包含性** —— 只解算 build/ 与 install/,不越域取证(见文末 describe)。
  */
 
+import { installVscodeStub } from "./_vscode-stub";
+// 双模式(2026-10-16):本文件的 models/api 链顶层 import vscode(l10n),无头运行必须先装 stub。
+// TS 的 CJS 发射按源码顺序排 require——stub 安装语句放在 src 导入之前,保证先拦截 "vscode" 再加载被测模块;
+// 真集成宿主(npm test)能解析 vscode,installVscodeStub 幂等直通,不劫持。
+installVscodeStub();
+
 import * as assert from "assert";
+import * as nodeFs from "fs";
+import * as nodePath from "path";
 import {
     BuildMapCenter,
     MemoryFs,
@@ -52,7 +60,7 @@ import {
     synthesizeVanishedRows,
 } from "../../src/install-truth/api";
 import type { AreaFile, BuildContext, BuildMapBuilder, BuildPackage, FsLike, JumpEntry, PackageAreas, SidebarRow } from "../../src/install-truth/api";
-import { buildTree, countLeftovers, fileContextValue, fileNodeOf, iconPlanOf, layoutOfViews, openTargetOf, rowStateStale, rowTooltip, runPayloadOf, srcLinkNote } from "../../src/sidebar/install-truth-tree";
+import { buildTree, countLeftovers, fileContextValue, fileNodeOf, iconPlanOf, layoutOfViews, openTargetOf, packageNodeOf, rowStateStale, rowTooltip, runPayloadOf, srcLinkNote } from "../../src/sidebar/install-truth-tree";
 import type { TreeNode } from "../../src/sidebar/install-truth-tree";
 import type { SidebarPackageView } from "../../src/install-truth/api";
 
@@ -1494,7 +1502,7 @@ describe("简易侧边栏:树模型(纯函数,零 vscode)", () => {
         assert.strictEqual(fileNodeOf(mkRow({ sourceMissing: true })).sourceMissing, true);
     });
 
-    it("tooltip 软链文案三档化 + 软链行时间戳合并(2026-10-14,用户裁定:不是所有软链都改了立即生效)", () => {
+    it("tooltip 软链文案三档化(2026-10-14)+ 时间戳恒双行(2026-10-16 指针/数据模型:叶子链/目录链/实体全是源+落点两行)", () => {
         const mk = (over: Record<string, unknown> = {}): Parameters<typeof rowTooltip>[0] =>
             ({ name: "n", status: "installed", installPath: "/i/n", library: false, generated: false, area: "share", ...over } as Parameters<typeof rowTooltip>[0]);
         // ① 接口定义(.msg/.srv/.action):消费物是 rosidl 生成代码 → 需重新构建,不再承诺"立即生效"
@@ -1507,12 +1515,14 @@ describe("简易侧边栏:树模型(纯函数,零 vscode)", () => {
         // ③ 其余(py 源码/资源)运行时按原文照读 → 保留现文案
         assert.ok(srcLinkNote(mk({ name: "n.py" })).includes("immediately"));
         assert.ok(srcLinkNote(mk({ name: "r.yaml" })).includes("immediately"));
-        // ④ 软链形态行(自身链 linkDomain / 上游目录链 viaLinkDomain)install 与源同一文件 → 合并单行「Mtime」
-        const linkRow = rowTooltip(mk({ name: "a.action", linkDomain: "src", sourceMtimeMs: 1000, installMtimeMs: 1000 }));
-        assert.strictEqual(linkRow.split("\n").filter((l) => l.toLowerCase().includes("mtime")).length, 1, linkRow);
-        assert.ok(linkRow.includes("Mtime:") && !linkRow.includes("Source mtime"), linkRow);
-        const viaRow = rowTooltip(mk({ name: "m.py", area: "import", viaLinkDomain: "build", sourceMtimeMs: 5, installMtimeMs: 5 }));
-        assert.strictEqual(viaRow.split("\n").filter((l) => l.toLowerCase().includes("mtime")).length, 1, viaRow);
+        // ④ 时间戳分层(2026-10-16 指针/数据模型,**推翻 10-14 合并裁定**):
+        //    叶子软链行(link=true)= 指针本体 → 双行:源时间=数据、落点时间=链接建立/改写时刻,天然可不同步
+        const linkRow = rowTooltip(mk({ name: "a.action", link: true, linkDomain: "src", sourceMtimeMs: 1000, installMtimeMs: 2000 }));
+        assert.ok(linkRow.includes("Source mtime:") && linkRow.includes("Install mtime:"), linkRow);
+        //    经目录链进入行(viaLink,文件自身非链)= 指针是上游目录链,与源数据同样**恒双行**——
+        //    源时间=数据、落点时间=目录链建立时刻(≈安装时刻),单行无法判断先后(2026-10-16 终版)
+        const viaRow = rowTooltip(mk({ name: "m.py", area: "import", viaLinkDomain: "build", sourceMtimeMs: 5, installMtimeMs: 2000 }));
+        assert.ok(viaRow.includes("Source mtime:") && viaRow.includes("Install mtime:"), viaRow);
         // 拷贝安装行(非链)才有双行对表的信息量 → 保留双行
         const copyRow = rowTooltip(mk({ name: "c.txt", sourceMtimeMs: 1, installMtimeMs: 2 }));
         assert.ok(copyRow.includes("Source mtime:") && copyRow.includes("Install mtime:"), copyRow);
@@ -2140,5 +2150,361 @@ describe("构建事件化:rc-mtime 增量门(refreshAfterBuildSignal,2026-09-30)
         // (2026-09-30 前的契约是"链尾补一次全量"= calls===2;门把它降为零扫描)
         assert.strictEqual(calls, 1, "单飞 1 轮全量 + 链尾增量门快速路(零扫描)");
         center.dispose();
+    });
+});
+
+describe("时间戳自愈(2026-10-16):buildTimes 进全局指纹 + 探针确认的强制包增量", () => {
+    /** 三包夹具(a/b/c)+ readdir 计数 + 全局/逐包事件计数 */
+    function healFixture() {
+        const mem = base();
+        addCmakePkg(mem, "a");
+        addTarget(mem, "a", "ta", "ta", { srcs: [`${SRC}/a/src/ta.cpp`] });
+        addCmakePkg(mem, "b");
+        addTarget(mem, "b", "tb", "tb", { srcs: [`${SRC}/b/src/tb.cpp`] });
+        addCmakePkg(mem, "c");
+        addTarget(mem, "c", "tc", "tc", { srcs: [`${SRC}/c/src/tc.cpp`] });
+        const dirs: string[] = [];
+        const fs: FsLike = {
+            stat: (p) => mem.stat(p),
+            lstat: (p) => mem.lstat(p),
+            readlink: (p) => mem.readlink(p),
+            readdir: (p) => {
+                dirs.push(p);
+                return mem.readdir(p);
+            },
+            readText: (p, m) => mem.readText(p, m),
+        };
+        let changes = 0;
+        let pkgChanges = 0;
+        const center = new BuildMapCenter({ workspaceRoot: WS, fs });
+        center.onDidChange(() => changes++);
+        center.onPackagesChanged(() => pkgChanges++);
+        return {
+            mem, dirs, center,
+            changes: () => changes, pkgChanges: () => pkgChanges,
+            resetEvents: (): void => { changes = 0; pkgChanges = 0; },
+        };
+    }
+
+    it("分层性质钉:仅重写某包 rc → 全局指纹变、逐包指纹不变(测试域不被纯重编惊动)", async () => {
+        const t = healFixture();
+        await t.center.refreshAfterBuildSignal(); // 未就绪 → 全量首扫
+        const snap1 = t.center.getState();
+        assert.ok(snap1 !== null);
+        t.mem.addFile(`${BUILD}/a/colcon_build.rc`, "0\n", 1000); // 纯重编:rc 变、P/J/A 全同
+        await t.center.refreshAfterBuildSignal();
+        const snap2 = t.center.getState();
+        assert.ok(snap2 !== null && snap1 !== snap2, "快照应已替换");
+        assert.notStrictEqual(
+            fingerprintOfSnapshot(snap1), fingerprintOfSnapshot(snap2),
+            "纯重编必须让全局指纹变,否则侧边栏不重绘(本批修的病根)"
+        );
+        assert.deepStrictEqual(
+            Array.from(packageFingerprints(snap1).entries()).sort(),
+            Array.from(packageFingerprints(snap2).entries()).sort(),
+            "逐包指纹不得含 buildTimes(测试域不因纯重编被惊动)"
+        );
+        t.center.dispose();
+    });
+
+    it("事件级:纯重编(rc 变)→ onDidChange 恰 1 次、包差分仍空", async () => {
+        const t = healFixture();
+        await t.center.refreshAfterBuildSignal();
+        t.resetEvents();
+        t.mem.addFile(`${BUILD}/a/colcon_build.rc`, "0\n", 1000);
+        await t.center.refreshAfterBuildSignal();
+        assert.strictEqual(t.changes(), 1, "纯重编必须发全局事件");
+        assert.strictEqual(t.pkgChanges(), 0, "逐包差分保持安静");
+        t.center.dispose();
+    });
+
+    it("强制包:探针确认差异后 refreshIncremental([a]) → a 重扫、b/c 零读取(快速路对强制失效)", async () => {
+        const t = healFixture();
+        await t.center.refreshAfterBuildSignal();
+        t.dirs.length = 0;
+        await t.center.refreshIncremental(["a"]); // 探针已实测差异(测试以直接调用代表探针结论)
+        assert.ok(t.dirs.indexOf(`${BUILD}/a`) >= 0, "强制包跳过门的否决被重扫");
+        assert.strictEqual(t.dirs.indexOf(`${BUILD}/b`), -1, "未列包零读取");
+        assert.strictEqual(t.dirs.indexOf(`${BUILD}/c`), -1, "未列包零读取");
+        t.center.dispose();
+    });
+
+    it("并集:rc 变的 b ∪ 强制的 a 重扫,未列的 c 零读取", async () => {
+        const t = healFixture();
+        await t.center.refreshAfterBuildSignal();
+        t.dirs.length = 0;
+        t.mem.addFile(`${BUILD}/b/colcon_build.rc`, "0\n", 2000);
+        await t.center.refreshIncremental(["a"]);
+        assert.ok(t.dirs.indexOf(`${BUILD}/a`) >= 0, "强制包生效");
+        assert.ok(t.dirs.indexOf(`${BUILD}/b`) >= 0, "rc 门逮住真实变化");
+        assert.strictEqual(t.dirs.indexOf(`${BUILD}/c`), -1, "未列包零读取");
+        t.center.dispose();
+    });
+
+    it("单飞合并:扫描 pending 期间新到的 forcePkgs 累积生效(不丢失)", async () => {
+        const t = healFixture();
+        await t.center.refreshAfterBuildSignal();
+        t.dirs.length = 0;
+        const p1 = t.center.refreshIncremental(["a"]);
+        const p2 = t.center.refreshIncremental(["b"]); // 单飞期间再确认 → 累积
+        await Promise.all([p1, p2]);
+        assert.ok(t.dirs.indexOf(`${BUILD}/a`) >= 0, "首报强制包生效");
+        assert.ok(t.dirs.indexOf(`${BUILD}/b`) >= 0, "合并期新增强制包累积生效");
+        t.center.dispose();
+    });
+
+    it("树模型:包节点携带 buildTimeMs;fileNodeOf 透传行身 5 字段(适配层重建 tooltip 用)", () => {
+        const view = {
+            pkg: "p", prefix: "/i/p", layout: "isolated", installForm: "symlink", buildType: "ament_python",
+            buildTimeMs: 123456, rows: [],
+        } as unknown as Parameters<typeof packageNodeOf>[0];
+        const pkgNode = packageNodeOf(view, WS);
+        assert.strictEqual(pkgNode.buildTimeMs, 123456);
+
+        const row = {
+            name: "a/b.py", status: "installed", installPath: "/i/p/a/b.py", library: false, generated: true,
+            area: "import", sourceEvidence: "jump-record", linkDomain: "src", viaLinkDomain: "build",
+        } as Parameters<typeof fileNodeOf>[0];
+        const fileNode = fileNodeOf(row);
+        assert.strictEqual(fileNode.name, "a/b.py");
+        assert.strictEqual(fileNode.sourceEvidence, "jump-record");
+        assert.strictEqual(fileNode.linkDomain, "src");
+        assert.strictEqual(fileNode.viaLinkDomain, "build");
+        assert.strictEqual(fileNode.generated, true);
+    });
+});
+
+describe("安装内容解算:Form B(develop/egg-link)导出区补采(2026-10-16)", () => {
+    const INSTALL = `${WS}/install`;
+    const T0 = 1700000000000;
+
+    /** develop 形态 py 包(site 顶层只有 egg-link 记账文件;build 镜像 py→src 链;src 下真实模块) */
+    function developMem(withMirror: boolean): MemoryFs {
+        const mem = base();
+        addPythonPkg(mem, "py", "[console_scripts]\nsss = py.sss:main\n", ["py/sss.py"]);
+        mem.addFile(`${BUILD}/py/colcon_build.rc`, "0\n", T0);
+        mem.addFile(`${SRC}/py/py/__init__.py`, "", T0);
+        mem.addFile(`${SRC}/py/py/sss.py`, "def main():\n    pass\n", T0);
+        if (withMirror) {
+            mem.addLink(`${BUILD}/py/py`, `${SRC}/py/py`, T0);
+        }
+        mem.addFile(`${INSTALL}/.colcon_install_layout`, "isolated", T0);
+        mem.addFile(`${INSTALL}/py/lib/py/sss`, "#!/usr/bin/python3\n", T0);
+        mem.addFile(`${INSTALL}/py/lib/python3.10/site-packages/py-topic.egg-link`, `${BUILD}/py\n.\n`, T0);
+        return mem;
+    }
+
+    /** 可换底 FsLike(state.mem 换底 = 模拟镜像链丢失) */
+    function swappableFs(mem: MemoryFs): { fs: FsLike; state: { mem: MemoryFs } } {
+        const state = { mem };
+        const fs: FsLike = {
+            stat: (p) => state.mem.stat(p),
+            lstat: (p) => state.mem.lstat(p),
+            readlink: (p) => state.mem.readlink(p),
+            readdir: (p) => state.mem.readdir(p),
+            readText: (p, m) => state.mem.readText(p, m),
+        };
+        return { fs, state };
+    }
+
+    async function areasAndWarnings(fs: FsLike): Promise<{ areas: PackageAreas; warnings: string[] }> {
+        const ctx = (await locateBuildRoot(fs, WS)) as BuildContext;
+        const pkgs = await discoverBuildPackages(fs, ctx);
+        const { jumps } = await collectJumps(fs, ctx, pkgs);
+        const result = await collectAreas(fs, ctx, pkgs, jumps);
+        return { areas: result.areas.get("py") as PackageAreas, warnings: result.warnings };
+    }
+
+    it("Form B:egg-link 解析 → import 区出现镜像导出行(经 src 链)+ egg-link 记账行(generated,无捏造源)", async () => {
+        const { fs } = swappableFs(developMem(true));
+        const a = (await areasAndWarnings(fs)).areas;
+        const imp = a.files.filter((f) => f.area === "import");
+        const mod = imp.filter((f) => f.relPath === "sss.py")[0];
+        assert.ok(mod !== undefined, "镜像导出的模块行必须出现(此前整区蒸发)");
+        assert.strictEqual(mod.installPath, `${BUILD}/py/py/sss.py`, "落点 = build 镜像路径(import 解析处)");
+        assert.strictEqual(mod.viaLinkPath, `${BUILD}/py/py`, "经 build/py/py 根链进入");
+        assert.strictEqual(mod.viaLinkDomain, "src", "via 指向 src(链形态行,软链合并行/消失行合成准入)");
+        assert.strictEqual(mod.sourcePath, `${SRC}/py/py/sss.py`, "源落点 = src 镜像目标");
+        assert.strictEqual(mod.generated, false, "模块本体是源文件,不是生成物");
+        assert.strictEqual(mod.agreement, "observed", "记录里没有、实际存在 = 扩大档");
+        const book = imp.filter((f) => f.relPath === "py-topic.egg-link")[0];
+        assert.ok(book !== undefined, "egg-link 记账行收录(用户裁定)");
+        assert.strictEqual(book.generated, true, "记账文件 = 约定生成物(灰类)");
+        assert.strictEqual(book.sourcePath, undefined, "防 rootmap 捏造不存在的源路径");
+        assert.ok((book.sourceRef ?? "").indexOf("egg-link") >= 0, "来源说明 = 中性 develop 声明");
+        assert.strictEqual(book.installPath, `${INSTALL}/py/lib/python3.10/site-packages/py-topic.egg-link`);
+    });
+
+    it("分层语义:镜像链丢失 → 强制增量重扫 → 消失行合成 missing(❌ 挂生效层);egg-link 行无恙", async () => {
+        const f = swappableFs(developMem(true));
+        const center = new BuildMapCenter({ workspaceRoot: WS, fs: f.fs });
+        await center.refreshAfterBuildSignal(); // 首扫:develop 行在
+        const before = center.getState()!.areas.get("py")!;
+        assert.ok(before.files.some((x) => x.area === "import" && x.relPath === "sss.py"));
+        f.state.mem = developMem(false); // 镜像链丢失(手删不写 rc → rc 门假阴性)
+        await center.refreshIncremental(["py"]); // 探针确认差异 → 强制包跳过门的否决
+        const after = center.getState()!.areas.get("py")!;
+        const mod = after.files.filter((x) => x.area === "import" && x.relPath === "sss.py");
+        assert.strictEqual(mod.length, 1, "消失行合成:行不蒸发");
+        assert.strictEqual(mod[0].agreement, "manifest-only", "合成行 = missing 语义(❌ 挂生效层)");
+        const book = after.files.filter((x) => x.area === "import" && x.relPath === "py-topic.egg-link")[0];
+        assert.ok(book !== undefined && book.agreement !== "manifest-only", "记账层丢失无感 → egg-link 行不受影响");
+        center.dispose();
+    });
+
+    it("域门:devDir 出 build/ → 零模块行 + warning 留痕", async () => {
+        const mem = developMem(true);
+        mem.addFile(`${INSTALL}/py/lib/python3.10/site-packages/outer.egg-link`, "/somewhere/else/py\n.\n", T0);
+        const { areas, warnings } = await areasAndWarnings(mem);
+        assert.strictEqual(areas.files.filter((f) => f.area === "import" && f.relPath === "sss.py").length, 1, "本包 develop 行不受影响");
+        assert.ok(warnings.some((w) => w.indexOf("outside build/") >= 0), "越域拒收留痕(域包含性)");
+    });
+
+    it("域门:devDir 在 build/ 内但非本包 → 静默零行(它包自己的轮次会收)", async () => {
+        const mem = developMem(true);
+        mem.addFile(`${INSTALL}/py/lib/python3.10/site-packages/other.egg-link`, `${BUILD}/other\n.\n`, T0);
+        mem.addDir(`${BUILD}/other/py`);
+        const { areas, warnings } = await areasAndWarnings(mem);
+        const links = areas.files.filter((f) => f.area === "import" && f.relPath.endsWith(".egg-link"));
+        assert.strictEqual(links.length, 2, "两个记账行都收录");
+        assert.strictEqual(areas.files.filter((f) => f.area === "import" && f.relPath === "sss.py").length, 1, "本包 develop 行不受影响");
+        assert.strictEqual(warnings.filter((w) => w.indexOf("egg-link") >= 0).length, 0, "build/ 内非本包 → 静默");
+    });
+
+    it("copy 形态共存回归:site/<pkg> 实体目录照旧,与 egg-link 行互不干扰", async () => {
+        const mem = base();
+        addPythonPkg(mem, "py", "[console_scripts]\nsss = py.sss:main\n", ["py/sss.py"]);
+        mem.addFile(`${BUILD}/py/colcon_build.rc`, "0\n", T0);
+        mem.addFile(`${BUILD}/py/py.egg-info/SOURCES.txt`, "py/sss.py\n", T0);
+        mem.addFile(`${INSTALL}/.colcon_install_layout`, "isolated", T0);
+        mem.addFile(`${INSTALL}/py/lib/py/sss`, "#!/usr/bin/python3\n", T0);
+        mem.addFile(`${INSTALL}/py/lib/python3.10/site-packages/py/sss.py`, "def main():\n    pass\n", T0);
+        mem.addFile(`${INSTALL}/py/lib/python3.10/site-packages/py-topic.egg-link`, `${BUILD}/py\n.\n`, T0);
+        const { areas } = await areasAndWarnings(mem);
+        const imp = areas.files.filter((f) => f.area === "import").map((f) => f.relPath);
+        assert.ok(imp.indexOf("sss.py") >= 0, "copy 形态模块行照旧");
+        assert.ok(imp.indexOf("py-topic.egg-link") >= 0, "egg-link 行照常收录");
+        assert.strictEqual(imp.filter((r) => r === "sss.py").length, 1, "零重复(copy 路径命中;develop 侧镜像不存在)");
+    });
+
+    /** 异名布局:ROS 包 py,顶层模块目录 othermod(≠包名;top_level.txt 给真名)—— jazzy 实测 ros2w_ops_python 形态 */
+    function renamedModuleMem(withTopLevel: boolean, pyDir = "python3.10"): MemoryFs {
+        const mem = base();
+        addPythonPkg(mem, "py", "[console_scripts]\nsss = othermod.sss:main\n", ["othermod/sss.py"]);
+        mem.addFile(`${BUILD}/py/colcon_build.rc`, "0\n", T0);
+        if (withTopLevel) {
+            mem.addFile(`${BUILD}/py/py.egg-info/top_level.txt`, "othermod\n", T0);
+        }
+        mem.addFile(`${SRC}/py/othermod/__init__.py`, "", T0);
+        mem.addFile(`${SRC}/py/othermod/sss.py`, "def main():\n    pass\n", T0);
+        mem.addLink(`${BUILD}/py/othermod`, `${SRC}/py/othermod`, T0);
+        mem.addFile(`${INSTALL}/.colcon_install_layout`, "isolated", T0);
+        mem.addFile(`${INSTALL}/py/lib/py/sss`, "#!/usr/bin/python3\n", T0);
+        mem.addFile(`${INSTALL}/py/lib/${pyDir}/site-packages/py-topic.egg-link`, `${BUILD}/py\n.\n`, T0);
+        return mem;
+    }
+
+    it("Form B 异名布局:egg-link 第二行为 '.' 且 top_level.txt 指向异名模块目录 → import 区复活(此前整区蒸发)", async () => {
+        const { areas } = await areasAndWarnings(renamedModuleMem(true));
+        const imp = areas.files.filter((f) => f.area === "import");
+        const sss = imp.filter((f) => f.relPath === "sss.py")[0];
+        assert.ok(sss !== undefined, "异名模块行必须出现(top_level.txt 真名取代包名回退)");
+        const init = imp.filter((f) => f.relPath === "__init__.py")[0];
+        assert.ok(init !== undefined, "同链 __init__ 行一并复活");
+        assert.strictEqual(sss.installPath, `${BUILD}/py/othermod/sss.py`, "落点 = 异名 build 镜像路径");
+        assert.strictEqual(sss.sourcePath, `${SRC}/py/othermod/sss.py`, "入口模块行源 = 跳转记录命中(SOURCES.txt 真名)");
+        assert.strictEqual(sss.sourceEvidence, "jump-record", "入口模块行:记录优先于链(既有优先级不变)");
+        assert.strictEqual(init.installPath, `${BUILD}/py/othermod/__init__.py`, "落点 = 异名 build 镜像路径");
+        assert.strictEqual(init.viaLinkPath, `${BUILD}/py/othermod`, "经异名根链进入");
+        assert.strictEqual(init.viaLinkDomain, "src", "via 指向 src");
+        assert.strictEqual(init.sourcePath, `${SRC}/py/othermod/__init__.py`, "非入口行源 = 镜像链真目标(非 rootmap 拼装的 src/py/py/…)");
+        assert.strictEqual(init.sourceEvidence, "develop-link", "证据 = develop 镜像链");
+        const book = imp.filter((f) => f.relPath === "py-topic.egg-link")[0];
+        assert.ok(book !== undefined, "egg-link 记账行照常收录");
+    });
+
+    it("Form B 异名布局:top_level.txt 缺失 → 包名回退保持历史行为(零模块行不炸)", async () => {
+        const { areas, warnings } = await areasAndWarnings(renamedModuleMem(false));
+        const mod = areas.files.filter((f) => f.area === "import" && f.relPath === "sss.py");
+        assert.strictEqual(mod.length, 0, "无工件可读 → 包名回退,build/py/py 不存在 → 零行(历史行为)");
+        assert.deepStrictEqual(warnings, [], "回退不产生警告");
+    });
+
+    it("Form B 异名布局:top_level.txt 为空白文件 → 同样安全回退不炸", async () => {
+        const mem = renamedModuleMem(true);
+        mem.addFile(`${BUILD}/py/py.egg-info/top_level.txt`, "\n  \n", T0);
+        const { areas } = await areasAndWarnings(mem);
+        assert.strictEqual(areas.files.filter((f) => f.area === "import" && f.relPath === "sss.py").length, 0, "空白工件 = 无效 → 回退");
+    });
+
+    it("Form B python3.12 site 形态(jazzy):版本目录仅由 pythonSiteRoots 通配吸收,行为与 3.10 全同", async () => {
+        const { areas } = await areasAndWarnings(renamedModuleMem(true, "python3.12"));
+        const sss = areas.files.filter((f) => f.area === "import" && f.relPath === "sss.py")[0];
+        assert.ok(sss !== undefined, "3.12 形态模块行复活");
+        assert.strictEqual(sss.installPath, `${BUILD}/py/othermod/sss.py`);
+        const book = areas.files.filter((f) => f.area === "import" && f.relPath === "py-topic.egg-link")[0];
+        assert.strictEqual(book?.installPath, `${INSTALL}/py/lib/python3.12/site-packages/py-topic.egg-link`);
+    });
+});
+
+describe("i18n zh 册防回退钉(2026-10-16):「落点修改时间」措辞(指针/数据模型)", () => {
+    it("bundle zh:「Install mtime」行 =「落点修改时间」;旧措辞「安装修改时间」不再在册", () => {
+        const bundle = JSON.parse(
+            nodeFs.readFileSync(nodePath.join(__dirname, "..", "..", "..", "l10n", "bundle.l10n.zh-cn.json"), "utf8")
+        ) as Record<string, string>;
+        assert.strictEqual(bundle["Install mtime: {0}"], "落点修改时间:{0}", "落点时间 = 指针本体时间(叶子软链=链接建立时刻),非「安装修改时间」");
+        assert.ok(
+            Object.values(bundle).every((v) => !v.includes("安装修改时间")),
+            "旧措辞不得回流"
+        );
+    });
+});
+
+describe("两类分类:第一类(generated)单时间 + 豁免 C 报警(2026-10-16,用户定义)", () => {
+    /** 最小合法行(generated 可覆盖;sourcePath 指向 build 模拟第一类) */
+    const mkRow = (over: Record<string, unknown> = {}): Parameters<typeof fileNodeOf>[0] =>
+        ({
+            name: "n", status: "installed", installPath: "/i/n", library: false, generated: true,
+            area: "include", sourcePath: "/ws/build/pkg/gen/n", ...over,
+        } as Parameters<typeof fileNodeOf>[0]);
+
+    it("第一类时间行:generated 行只显示落点(install)时间,源时间行不显示", () => {
+        const tip = rowTooltip(mkRow({ sourceMtimeMs: 1000, installMtimeMs: 2000 }));
+        assert.ok(tip.includes("Install mtime:"), tip);
+        assert.ok(!tip.includes("Source mtime:"), "第一类的源是 build 中间物,对考古无意义(源时间行不推)");
+    });
+
+    it("第二类回归:非 generated 恒双行(源 + 落点)", () => {
+        const tip = rowTooltip(mkRow({ generated: false, sourcePath: "/ws/src/pkg/n", sourceMtimeMs: 1, installMtimeMs: 2 }));
+        assert.ok(tip.includes("Source mtime:") && tip.includes("Install mtime:"), tip);
+    });
+
+    it("图标豁免:generated + sourceMissing → 非 warning(落回文件图标);非 generated → warning 保持", () => {
+        const gen = iconPlanOf(fileNodeOf(mkRow({ sourceMissing: true })));
+        assert.notDeepStrictEqual(
+            gen, { tag: "codicon", id: "warning", color: "editorWarning.foreground" },
+            "第一类豁免 C 报警:其源是可重生成中间物,点击也不去那里"
+        );
+        assert.deepStrictEqual(gen, { tag: "file", path: "/ws/build/pkg/gen/n" }, "落回文件图标主题");
+        const usr = iconPlanOf(fileNodeOf(mkRow({ generated: false, sourcePath: "/ws/src/pkg/gone.py", sourceMissing: true })));
+        assert.deepStrictEqual(usr, { tag: "codicon", id: "warning", color: "editorWarning.foreground" }, "第二类 C 报警保持");
+    });
+
+    it("优先级钉:generated + missing → error;generated + dangling(与 sourceMissing 同真)→ 断链", () => {
+        assert.deepStrictEqual(
+            iconPlanOf(fileNodeOf(mkRow({ status: "missing", sourceMissing: true }))),
+            { tag: "codicon", id: "error", color: "list.errorForeground" },
+            "install 侧生成头丢失报 error(用户规则前半句)"
+        );
+        assert.deepStrictEqual(
+            iconPlanOf(fileNodeOf(mkRow({ dangling: true, sourceMissing: true }))),
+            { tag: "codicon", id: "debug-disconnect", color: "list.errorForeground" },
+            "软链生成头 build 目标丢失报断链而非 ⚠(豁免后自然落断链,用户规则后半句)"
+        );
+    });
+
+    it("徽标豁免:fileNodeOf generated + sourceMissing → 无 ⚠;非 generated → ⚠", () => {
+        assert.strictEqual(fileNodeOf(mkRow({ sourceMissing: true })).description, undefined, "第一类豁免 ⚠ 徽标");
+        assert.strictEqual(fileNodeOf(mkRow({ generated: false, sourceMissing: true })).description, "⚠", "第二类徽标保持");
     });
 });

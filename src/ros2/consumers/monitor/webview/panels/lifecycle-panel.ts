@@ -280,7 +280,7 @@ function buildLifecycleCard(node: any, fullName: string): HTMLElement {
 
     // 十八轮:转换仍在进行中(重建发生在转换等待期)→ 日志区补"执行中"一行(历史已回放)
     if (transitionsInFlight.has(fullName)) {
-        appendLifecycleLog(fullName, "转换执行中…", "pending");
+        appendLifecycleLog(fullName, t("Transition in progress…"), "pending");
     }
 
     return nodeDiv;
@@ -433,7 +433,7 @@ function triggerTransition(nodeName: string, transition: string) {
         return;
     }
     transitionsInFlight.add(nodeName);
-    appendLifecycleLog(nodeName, `转换 ${transition} 执行中…`, "pending");
+    appendLifecycleLog(nodeName, t("Transition {0} in progress…", transition), "pending");
     sendLog("trace", `triggerTransition:node=${nodeName}, transition=${transition}`);
     vscode.postMessage({
         command: 'triggerLifecycleTransition',
@@ -450,11 +450,11 @@ export function noteTransitionResult(nodeName: string, transition: string, succe
     transitionsInFlight.delete(nodeName);
     let text: string;
     if (success) {
-        text = `转换 ${transition} 成功`;
+        text = t("Transition {0} succeeded", transition);
     } else if (currentState) {
-        text = `转换 ${transition} 失败(节点当前:${currentState};界面已过期则点击后自动刷新)`;
+        text = t("Transition {0} failed (node is now: {1}; if the UI is stale, click to auto-refresh)", transition, currentState);
     } else {
-        text = `转换 ${transition} 失败`;
+        text = t("Transition {0} failed", transition);
     }
     sendLog("debug", `transitionResult: node=${nodeName}, ${text}`);
     appendLifecycleLog(nodeName, text, success ? "success" : "error");

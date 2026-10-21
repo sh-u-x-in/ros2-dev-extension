@@ -19,10 +19,11 @@
 | 能力 | 语义 |
 |:--|:--|
 | `getState()` | `null` = **未就绪**(首次构建未完成);快照 = 已就绪(空包表也可区分) |
-| `onDidChange(ev)` | **首次就绪通知一次** + **内容指纹变化**才通知(核心值未变不打扰下游) |
+| `onDidChange(ev)` | **首次就绪通知一次** + **指纹变化**才通知;指纹含 buildTimes(2026-10-16)——纯重编(rc 变内容同)也通知,侧边栏 tooltip 时间戳靠它自愈 |
 | `refresh(reason)` | 单飞 + 合并:重建进行中再调用 → 标脏,链尾以最新状态补刷一次 |
 | `invalidate(reason)` | 只标脏,**失效源(2026-09-30 起)**:构建信号主动 `refreshAfterBuildSignal()`、手动刷新、换根重建(build/** watcher 已退役) |
 | `refreshAfterBuildSignal()` | 构建信号入口(幂等 = 单飞+合并):未就绪全量首扫;就绪后 **rc-mtime 增量门** —— 逐包 stat `colcon_build.rc` 对比扫描记账,只重扫重写的包;零变化快速路;实测单包构建 ≈69ms 收敛(13 号设计 §3.2) |
+| `refreshIncremental(forcePkgs?)` | 探针确认的增量刷新(2026-10-16):**前件 = 探针实测到差异**(无点击无探针,无差异零动作);`forcePkgs` = 探针确认差异所在的包,语义「不要求 rc 变化作为证据,跳过门的否决」(手工变化不写 rc),其余包仍走 rc 门顺带逮同期真实构建;单飞合并期间新到累积下一轮生效 |
 | `onPackagesChanged(names)` | **包级差分**(逐包指纹对比,新增/变更/删除非空才发;首扫不发)—— 语义"包真的变了",喂测试域按包重发现(取代旧 onBuildTouch) |
 | `getLastError()` | 构建失败 → **保留上次好快照** + 记录原因;订阅方异常不影响数据中心 |
 
@@ -39,6 +40,7 @@
 
 | 时间 | 说明 |
 |:--|:--|
+| 2026-10-16 | **时间戳自愈**:①`fingerprintOfSnapshot` 增 T 行(buildTimes 入**全局**指纹,逐包指纹不加——纯重编也让侧边栏重绘,**推翻 10-14「纯展示,不参与指纹」**;测试域保持安静,分层有测试钉);②新增 `refreshIncremental(forcePkgs?)`:点击探针实测差异后的快速愈合入口,forcePkgs 跳过 rc 门的否决(手工变化不写 rc 会假阴性),前件纪律=扫描唯一前件是探针实测差异;③三处旧注释更正。build-map 测试 +6(分层钉/事件级/强制包/并集/单飞累积/树模型字段),文件改双模式 stub(headless 可跑),junit 真实 testcase 1337→1343、0 失败 |
 | 2026-09-30 | **构建事件化**:文件表去 trigger.ts(整文件退役,零引用清理);build-map-center 增逐包指纹/包级差分/rc-mtime 增量门;契约表失效源改"构建信号/手动/换根",新增 `refreshAfterBuildSignal` 与 `onPackagesChanged` 两行;shared-center 去 watcher 化。依据 `手工重设计/13`;验证与数字见主 README 2026-09-30 行 |
 | 2026-09-29 | 文档补登(2026-09-21 后欠账):①新增 **shared-center.ts**(2026-09-24 dfcd829,B15 接电:共享单例 + watcher 接电,文件表已入);②query.ts 补侧边栏门面行(SidebarRow/rowsOf/sidebarSnapshot/sidebarView/packageView + sourceRef);③trigger.ts 补接电后"只置脏 + 按包刷新广播"语义;细则见 install-truth/README.md 修改记录侧边栏七批各行 |
 | 2026-09-13 22:22 | 建档(分层重构配套):`center.ts` 迁入 `center/exec-map-center.ts` |

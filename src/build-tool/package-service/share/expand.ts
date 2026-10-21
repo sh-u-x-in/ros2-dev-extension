@@ -243,6 +243,7 @@ export function mergeSpec(
     const cloneFallback = (): CommandSpec => ({
         template: fallback.template,
         custom: fallback.custom,
+        customHint: fallback.customHint,
         argv_list: cloneArgList(fallback.argv_list),
     });
     if (!raw || typeof raw !== "object") {
@@ -252,6 +253,9 @@ export function mergeSpec(
     return {
         template: normalizeTemplateField((raw as { template?: unknown }).template) ?? fallback.template,
         custom: typeof raw.custom === "string" ? raw.custom : fallback.custom,
+        // customHint(2026-10-18):可选字段,同"字段是否给出"口径——字符串(含空串)采纳,缺省回落;
+        // 出厂 spec 恒缺省(提示非出厂成员)⇒ 显示层回落调用方自备示例
+        customHint: typeof raw.customHint === "string" ? raw.customHint : fallback.customHint,
         argv_list: Array.isArray(rawList) ? normalizeSpec({ argv_list: rawList } as Partial<CommandSpec>).argv_list : cloneFallback().argv_list,
     };
 }

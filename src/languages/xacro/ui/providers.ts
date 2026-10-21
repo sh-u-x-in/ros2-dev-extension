@@ -32,18 +32,54 @@ export { queryAt, logMissReason, logVarMiss, dollarVarAt, resolveDollarRef } fro
 /**
  * 注册 xacro 语言提供器(09 装配:PackageMap → IncludeGraph → build 三阶段 → watcher → Providers)
  * @param packages 可选共享 PackageMap(09:launch 复用同一实例);不传则自建
+ * @param enabled 环境门谓词(P2 start 化:门关时 start() 空转不建图;门开由编排层显式 start 补建)
+ * @returns disposables + start()(幂等;编排层在门开后调用;门关时空转)
  */
-export function registerXacroProviders(packages?: PackageMap): vscode.Disposable[] {
+export function registerXacroProviders(
+    packages?: PackageMap,
+    enabled?: () => boolean
+): { disposables: vscode.Disposable[]; start(): Promise<void> } {
     // ① 共享 PackageMap(工作区 package.xml + 系统包列表先行,位置懒获取)
     const pkg = packages ?? new PackageMap();
     // ② IncludeGraph(展开图核心)
     const graph = new IncludeGraph(pkg);
-    // ③ 动态维护 watcher(监听 + rename + 事件驱动 + 轮巡),尽早建立避免 build 期间改动丢失
+    // ③ 动态维护 watcher(监听 + rename + 事件驱动 + 轮巡)
     const watcher = new XacroWatcher(graph, pkg);
-    watcher.start();
-    // ④ 启动预热 build(三阶段:静态骨架 → ${} 迭代收敛 → 图外兜底;异步不阻塞 activate)
-    void pkg.initialize().then(() => {
-        void graph.build([]);
+
+    // P2 start 化:构造/注册零后台活动(旧实现在此立即 watcher.start + 全图 build)。
+    // start = watcher 尽早建立(避免 build 期间改动丢失)→ pkg.initialize → 全图 build 三阶段。
+    // 门关(enabled()=false)空转返回;入口=编排层 reconcile + 首次打开 .xacro/.urdf 文档。
+    let startPromise: Promise<void> | undefined;
+    const isStarted = (): boolean => startPromise !== undefined;
+    const start = (): Promise<void> => {
+        if (startPromise) {
+            return startPromise;
+        }
+        if (enabled && !enabled()) {
+            return Promise.resolve(); // 门关:不启动,下次入口(reconcile/打开文档)再判
+        }
+        watcher.start();
+        startPromise = pkg.initialize().then(() => {
+            void graph.build([]);
+        });
+        return startPromise;
+    };
+
+    // 打开 .xacro/.urdf 即触发惰性启动(门开时;与编排层 reconcile 双入口)
+    const openDocListener = vscode.workspace.onDidOpenTextDocument((doc) => {
+        if (/\.xacro$/i.test(doc.uri.fsPath) || /\.urdf$/i.test(doc.uri.fsPath)) {
+            void start();
+        }
+    });
+
+    // 用户排除变更 → 全量重建(2026-10-18 后剪枝批:后过滤在 build/fallback,重建即生效;未启动忽略——start 会读最新配置)
+    const excludeFoldersListener = vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration("ROS2.search.excludeFolders")) {
+            if (!isStarted()) {
+                return;
+            }
+            void graph.build([]);
+        }
     });
 
     // 用 pattern 精确限定 .xacro/.urdf,不干扰其它 xml 文件
@@ -88,15 +124,20 @@ export function registerXacroProviders(packages?: PackageMap): vscode.Disposable
     );
 
     // 诊断(D1-D7,08)
-    const diagnostics = registerXacroDiagnostics(graph, pkg);
+    const diagnostics = registerXacroDiagnostics(graph, pkg, isStarted);
 
     log.info("xacro 语言提供器已注册:精确跳转(F12/Ctrl+点击)+ include 文件级链接 + 悬浮 + 补全 + 诊断(D1-D14)");
-    return [
-        definitionProvider,
-        documentLinkProvider,
-        hoverProvider,
-        completionProvider,
-        diagnostics,
-        { dispose: () => watcher.dispose() }
-    ];
+    return {
+        disposables: [
+            definitionProvider,
+            documentLinkProvider,
+            hoverProvider,
+            completionProvider,
+            diagnostics,
+            excludeFoldersListener,
+            openDocListener,
+            { dispose: () => watcher.dispose() }
+        ],
+        start,
+    };
 }

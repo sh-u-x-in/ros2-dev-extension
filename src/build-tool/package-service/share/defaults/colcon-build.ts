@@ -10,10 +10,11 @@
  * (来自 `ROS2.build.installLayout`,经 `resolveInstallType()` 还原成两轴)。
  * ⇒ 4 条交叉预设与 `seedIndexForAxes()` **整体删除**;设置是这两轴的唯一来源。
  *
- * ── 预设只剩 2 条 = "详细输出"的两半(2026-09-22 用户裁定)────────────
+ * ── 预设只剩 2 条 = "详细输出"的两半(2026-09-22 用户裁定;2026-10-21 选项 2 改整段旗标)──
  *  · `${1}` = `--log-level debug`(⚠️ 必须落在 verb **之前**)
- *  · `${2}` = `log_command+`(与模板字面量 `--event-handlers console_cohesion+` 合成完整的那一条)
- * 两条都勾 = 今天的"详细输出";都不勾 = 普通输出。`${log_level}` 变量**已删除**。
+ *  · `${2}` = `--event-handlers console_cohesion+`(**整段旗标**;2026-10-21 用户裁定——模板里不再有
+ *    event-handlers 字面量,不勾 2 号 = 命令里完全没有 `--event-handlers`)
+ * 两条都勾 = 详细输出;都不勾 = colcon 默认输出。`${log_level}` 变量**已删除**。
  *
  * ── `${0}` 保留功能但不使用 ────────────────────────────────────────
  * 默认模板里**不写** `${0}` ⇒ 二级弹窗不会出现「自定义输入」项(只列那 2 条预设);
@@ -29,12 +30,11 @@
  *
  * ── 出厂模板就是"扩展构建命令"的唯一事实源 ──────────────────────────
  * 扩展侧不再有硬编码的命令构造(ros2/ 的 `toColconBuildCommand` 已删除,`colcon_build` 只执行 argv);
- * 出厂默认模板与"此前内置构造产出"**逐字节等价**(锁定用例在 test/suite/share-expand.test.ts):
- *   `colcon [--log-level debug] build <安装两轴flags> --event-handlers console_cohesion+[ log_command+] --base-paths <ws>
- *     [--packages-select …] [--parallel-workers n] [--cmake-clean-cache]
- *     --cmake-args -DCMAKE_BUILD_TYPE=<type> -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`
- * 默认模板把同样的片段搬进占位符:普通输出 + 两轴变量 ⇒ 与今天**逐字节相同**;
- * 详细输出 = 勾上两条预设(见 test/suite/share-expand.test.ts 的等价性锁定用例)。
+ * 出厂模板(2026-10-21 用户定版)展开形态:
+ *   `colcon [--log-level debug] build <安装两轴flags> [--event-handlers console_cohesion+] --base-paths <ws>
+ *     [--packages-select …] [--cmake-clean-cache]
+ *     --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`
+ * 详细输出 = 勾上两条预设(等价性锁定用例在 test/suite/share-expand.test.ts)。
  */
 
 import { quoteShellArg, splitShellArgs } from "../expand";
@@ -67,38 +67,38 @@ export function axesFromArgv(argvText: string): ColconInstallAxes {
 }
 
 /**
- * 出厂默认预设:**"详细输出"的两半**(用户裁定)。
- * 两条都勾 = 与今天 `toConcolBuildCommand(verbose=true)` 的输出**逐字节相同**:
- * `${1}` 补上 verb 之前的 `--log-level debug`;`${2}` 只给 handler **名**,
- * 与模板里的字面量 `--event-handlers console_cohesion+` 合成完整的那一条(不再出现重复 flag)。
+ * 出厂默认预设:**"详细输出"的两半**(用户裁定;2026-10-21 选项 2 改整段旗标)。
+ * `${1}` 补上 verb 之前的 `--log-level debug`;`${2}` = **整段** `--event-handlers console_cohesion+`
+ * (模板里已无 event-handlers 字面量 ⇒ 不勾 2 号 = 命令里完全没有该旗标)。
  *
- * ⚠️ 这两条是**两个槽**(`${1}` 在 `build` **之前**、`${2}` 在 `--event-handlers` 之后),**故意不合成一组** ——
+ * ⚠️ 这两条是**两个槽**(`${1}` 在 `build` **之前**、`${2}` 在两轴之后),**故意不合成一组** ——
  * "组"(同一槽的多条备选)只能表达**同一个位置**的互斥备选;这两半位置不同(实测 `--log-level` 落到 verb
  * 之后 colcon 直接退码 2)。想加"互斥档位"(如 Debug/Release 构建类型),那才是组的正确用法:
  * 在设置里加一个槽 + 一组备选,并把它放在模板尾部(后写覆盖)。
  */
 export const COLCON_BUILD_PRESETS: readonly ArgPreset[] = [
-    // (2026-10-04 i18n 期2,D3 裁定)出厂预设描述走语言中立英文——这是写进用户设置的数据非 UI 铬,
-    // 与 manifest default 同步(share-expand 同步锁用例比对两处相等);用户可在设置里自行改写
+    // (2026-10-20 用户裁定澄清)出厂预设描述:**存储恒英文**(写进用户设置的数据,与 manifest default
+    // 同步;share-expand 同步锁用例比对两处相等),**显示**经 factory-l10n.presetLabel 查册本地化
+    // (2026-10-21 升格:条目级判定——同槽位 + argv + describe 逐字段相等才查册)
     { argv: "--log-level debug", describe: "Verbose output 1/2: turn on debug logging" },
-    { argv: "log_command+", describe: "Verbose output 2/2: log every command invoked" },
+    { argv: "--event-handlers console_cohesion+", describe: "Verbose output 2/2: cohesive console event output" },
 ];
 
 /**
- * 出厂默认模板:普通输出(不勾预设)时与"此前内置构造的产出"**逐字节等价**(锁定用例保障)。
+ * 出厂默认模板(2026-10-21 用户定版):不勾预设 = 无 `--event-handlers`(colcon 默认输出);
+ * 勾 2 号 = 整段 `--event-handlers console_cohesion+` 出现在两轴之后。
  *
  * ⚠️ 这是**一段命令文本**(2026-10-07 起设置侧表示由词数组改回字符串——数组是 09-28 为设置
  * 面板逐词显示而选的表示,功能扩展后已无消费者;同日拆除数组兼容,未分发无存量)。
  * 展开前按 shell 词法(空格/引号)切分,模板里可写引号包含空格的词。
- * `${2}` 落在字面量 `--event-handlers console_cohesion+` **之后**,而 `${2}` 只给 handler **名**
- * (`log_command+`)⇒ 勾上它时合成**一条** `--event-handlers console_cohesion+ log_command+`,
- * 与今天逐字节相同。(若你确实想整段覆盖,把那一条预设改成写全 `--event-handlers console_cohesion+ log_command+` 也行
- * —— 实测重复 `--event-handlers` 退码 0 且后一次生效,只是命令行里会出现两次。)
  * ⚠️ 模板**没有** `${0}` ⇒ 二级弹窗不出现「自定义输入」项(功能保留,加回 `${0}` 即恢复)。
  */
 export const COLCON_BUILD_SPEC: CommandSpec = {
-    template: "colcon ${1} build ${install_method} ${install_layout} --event-handlers console_cohesion+ ${2} --base-paths ${base_path} ${packages_select} ${clean} --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    template: "colcon ${1} build ${install_method} ${install_layout} ${2} --base-paths ${base_path} ${packages_select} ${clean} --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
     custom: "Custom input: hand-write arbitrary colcon arguments (multiple segments and quotes allowed). Add ${0} to the template to enable this entry (unused in the default template)",
+    // (2026-10-18 查表区收缩批)占位提示升格为出厂数据:原为 smart-build 调用方硬编码铬,随 presets
+    // 裸键 value 下发(manifest default 同步锁),显示经 factoryText 可译
+    customHint: "e.g. --continue-on-error --cmake-args -DCMAKE_BUILD_TYPE=Debug",
     argv_list: COLCON_BUILD_PRESETS.map((preset) => ({ argv: preset.argv, describe: preset.describe })),
 };
 

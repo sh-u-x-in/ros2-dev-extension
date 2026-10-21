@@ -17,7 +17,7 @@ import * as crypto from "crypto";
 import * as vscode from "vscode";
 
 import { composeApi } from "../../../api";
-import { fetchForms, fetchFullParamValues, onHelperHeartbeat, setHelperConnectionCallback, setHelperPushCallback, stopParamHelper } from "../helper/param-helper-client";
+import { fetchForms, fetchFullParamValues, onHelperHeartbeat, setHelperConnectionCallback, setHelperPushCallback, setParamHelperEnvFacade, setParamHelperFailureCallback, stopParamHelper } from "../helper/param-helper-client";
 import { param_collapse, ingestHelperPush } from "../monitor-api";
 import { clearActivePanel, getActivePanel, requestRefresh, setActivePanel } from "./monitor-refresh";
 import { setHelperScriptPath, startHelperFlow, stopHelperFlow } from "./monitor-helper-flows";
@@ -110,6 +110,15 @@ export function launchMonitor(context: vscode.ExtensionContext) {
     setHelperConnectionCallback((connected) => {
         requestRefresh(0);
     });
+    // P4 熔断/门拒回调:失败直达页面(按钮回 Start Helper + 状态行真实原因;自动停,无后台重试)
+    setParamHelperFailureCallback((reason) => {
+        void panel.webview.postMessage({
+            helperAction: 'error',
+            message: reason,
+            isRunning: false,
+        });
+    });
+    setParamHelperEnvFacade(composeApi.environment);
     // (2026-09-30 用户裁定)此处的 startParamHelper 自动启动已移除:
     const stylesheet = panel.webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, "assets", "ros", "core-monitor", "style.css")));
 

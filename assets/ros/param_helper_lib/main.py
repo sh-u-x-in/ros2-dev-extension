@@ -25,9 +25,9 @@ from .kernel import (
 from .ros_domain import client_cleanup_loop
 
 
-def main():
+def main(ext_version: str = "0"):
     # 冷启动仲裁:抢锁败者立即退出(扩展端 spawn 后轮询连接,自然命中抢到锁的胜者)
-    if not server.acquire_lock():
+    if not server.acquire_lock(ext_version):
         disk_log("flock 被占:已有服务端实例,败者退出")
         return
     register_sigterm()
