@@ -31,13 +31,13 @@ import type { LaunchExecSource } from "./launch-completion";
 const log = getLogger("launch-definition");
 
 /**
- * LG-2(2026-10-01 用户裁定):yaml 定义注册开关读取口——`ROS2.launch.yamlDefinitionEnabled`
- * (默认 true,**重启生效**;仅影响 yaml)。关闭时 providers.ts 跳过 yaml DefinitionProvider 注册,
- * 从源头规避字符串引号下方的定义指示线;py/xml 定义不受影响。
+ * LG-2(2026-10-01 用户裁定):yaml 定义注册开关读取口——`ROS2.tool.launch.yamlDefinitionEnabled`
+ * (2026-10-18 键族迁 `tool.` 层;默认 true,**重启生效**;仅影响 yaml)。关闭时 providers.ts 跳过
+ * yaml DefinitionProvider 注册,从源头规避字符串引号下方的定义指示线;py/xml 定义不受影响。
  * 旧 `yamlNodeMatch`(响应范围双模式,即时生效)已由本注册开关取代。
  */
 export function readYamlDefinitionEnabled(): boolean {
-    return vscode.workspace.getConfiguration("ROS2.launch").get<boolean>("yamlDefinitionEnabled", true);
+    return vscode.workspace.getConfiguration("ROS2.tool.launch").get<boolean>("yamlDefinitionEnabled", true);
 }
 
 /**

@@ -30,6 +30,9 @@ export interface WalkTimeoutConfig {
  * 按搜索类型分组的超时/深度配置(数组形式,默认值在此统一声明)。
  * 通用(default/message/xacro/package):总 10s / 分支 2s / 8 层;
  * 测试(test):总 30s / 分支 5s / 12 层(正则命中文件多,调高预算)。
+ * 2026-10-18 平铺批:default profile 保留作**引擎未知类型回退兜底**,不再暴露设置键;
+ * 本表同时是 manifest 12 键 `ROS2.search.walkTimeout.<type>.<field>` default 的**事实源**
+ * (同步锁用例锁定两处不漂移)。
  */
 export const WALK_TIMEOUT_PROFILES: ReadonlyArray<{ type: WalkSearchType } & WalkTimeoutConfig> = [
     { type: "default", totalTimeoutMs: 10000, branchTimeoutMs: 2000, maxDepth: 8 },
@@ -39,30 +42,11 @@ export const WALK_TIMEOUT_PROFILES: ReadonlyArray<{ type: WalkSearchType } & Wal
     { type: "test",    totalTimeoutMs: 30000, branchTimeoutMs: 5000, maxDepth: 12 },
 ];
 
-/** 用户设置中的单类覆盖(字段缺失 = 用内置默认;来自 ROS2.search.walkTimeouts) */
-export type WalkTimeoutOverride = Partial<WalkTimeoutConfig> & { type: WalkSearchType };
-
-/** 合理性保护:非法(非有限数/负数)覆盖值回退默认 */
-function positiveOr(v: number | undefined, fallback: number): number {
-    return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : fallback;
-}
-
 /**
- * 取某类搜索的超时/深度配置(纯函数,零依赖,始终有值;未知名回退 default)。
- * @param overrides 用户设置覆盖(可选),按 type 匹配;字段缺失或非法时用内置默认。
+ * 取某类搜索的超时/深度配置(纯函数,零依赖,始终有值;未知名回退 default profile)。
+ * 2026-10-18 平铺批:用户覆盖改由 `ROS2.search.walkTimeout.<type>.<field>` 12 键逐字段
+ * 现读(读取层 = walk-options.readWalkTimeoutConfig),旧 walkTimeouts 数组覆盖合并路径删除。
  */
-export function getWalkTimeoutConfig(
-    type: WalkSearchType,
-    overrides?: ReadonlyArray<WalkTimeoutOverride>,
-): WalkTimeoutConfig {
-    const def = WALK_TIMEOUT_PROFILES.find((p) => p.type === type) ?? WALK_TIMEOUT_PROFILES[0];
-    const o = overrides?.find((p) => p.type === type);
-    if (!o) {
-        return def;
-    }
-    return {
-        totalTimeoutMs: positiveOr(o.totalTimeoutMs, def.totalTimeoutMs),
-        branchTimeoutMs: positiveOr(o.branchTimeoutMs, def.branchTimeoutMs),
-        maxDepth: positiveOr(o.maxDepth, def.maxDepth),
-    };
+export function getWalkTimeoutConfig(type: WalkSearchType): WalkTimeoutConfig {
+    return WALK_TIMEOUT_PROFILES.find((p) => p.type === type) ?? WALK_TIMEOUT_PROFILES[0];
 }

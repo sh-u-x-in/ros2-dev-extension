@@ -167,6 +167,10 @@ export function installVscodeStub(): void {
                 vscodeStubWindow.inputBoxCalls++;
                 return vscodeStubWindow.inputBoxResponses.shift();
             },
+            // P2:重载提示(reload-prompt)走非模态 warning;桩缺此方法会在达到阈值时 TypeError
+            showWarningMessage: async (): Promise<unknown> => undefined,
+            showErrorMessage: async (): Promise<unknown> => undefined,
+            showInformationMessage: async (): Promise<unknown> => undefined,
         },
     };
 

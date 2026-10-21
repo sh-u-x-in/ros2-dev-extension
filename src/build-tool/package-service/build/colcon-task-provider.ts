@@ -28,6 +28,7 @@ import { getLogger } from "../../../logger";
 import * as vscode from "vscode";
 
 import { composeApi } from "../../../ros2/api";
+import { findColconOnPath, warnColconMissingOnce } from "./colcon-check";
 
 /** colcon 任务类型 ID(任务定义 definition.type,与 package.json taskDefinitions.colcon 对应) */
 export const COLCON_TASK_TYPE = "colcon";
@@ -98,6 +99,19 @@ export class ColconProvider implements vscode.TaskProvider {
         if (!hasTaskType(task, COLCON_TASK_TYPE)) {
             log.trace(vscode.l10n.t("Not a colcon task; skipping resolution: {0}", task.name));
             return undefined;
+        }
+        // 环境门(P1+P5,2026-10-18):无可用环境(含陈旧)不解析——返回 undefined = 本 provider 不接管,
+        // 不弹窗(VS Code 可能在列举/校验阶段多次调用 resolveTask)。稳态无环境时 provider 已被
+        // buildTaskProviderGate 注销,此处只堵「陈旧翻转与 gate sync 之间」的竞态窗口。
+        const envIssue = composeApi.environment.getEnvIssue();
+        if (envIssue !== null) {
+            log.info(vscode.l10n.t("colcon task not resolved: no usable ROS 2 environment ({0})", envIssue));
+            return undefined;
+        }
+        // colcon 构建前检查(2026-10-20):缺失 → 30s 去重非模态警告,然后照常解析放行——
+        // 终端里的真实 127 有信息量;返回 undefined 不接管只会换来 VS Code 泛化启动失败,更差。
+        if (findColconOnPath() === null) {
+            warnColconMissingOnce();
         }
 
         const definition = task.definition as RosTaskDefinition;

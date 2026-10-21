@@ -15,7 +15,7 @@ import * as vscode from "vscode";
 
 import { getLogger } from "../../../logger";
 import { composeApi } from "../../../ros2/api";
-import { ros2RunMemoryId } from "../share/defaults/ros2-run";
+import { ros2RunMemoryId, ROS2_RUN_SPEC } from "../share/defaults/ros2-run";
 import { pickPresets } from "../share/pick-preset";
 import { readSelectionMemory, writeSelectionMemory } from "../share/selection-memory";
 import { expandRos2Run, readRosRunSpec } from "./share-spec";
@@ -25,31 +25,47 @@ import type { RunDataSource } from "./run-data-source";
 /** smart-run 模块日志 */
 const log = getLogger("smart-run");
 
+/**
+ * 入口环境早退(P1+P5,2026-10-18):门关一句拒绝,不进选择/记忆写盘链。
+ * 三个入口(面板 / Ctrl+F10 / 侧边栏 ▶)共用;文案与执行层终点门同键(终点门保留 = webview 等
+ * 非命令路径的纵深)。副作用修复:旧链在终点被拒(return 不抛)后 notifyStaleIfNeeded 仍无条件执行,
+ * 环境+陈旧双弹窗——入口早退后该路径不再到达。
+ */
+function refuseIfNoEnvAtEntry(where: string): boolean {
+    const issue = composeApi.environment.getEnvIssue();
+    if (issue === null) {
+        return false;
+    }
+    log.info(vscode.l10n.t("Smart run refused at entry ({0}): no usable ROS 2 environment", where));
+    vscode.window.showErrorMessage(vscode.l10n.t("No usable ROS 2 environment detected; cannot execute. Reason: {0}. Configure and activate a ROS environment (ROS2.rosSetupScript / ROS2.pixiRoot) first, then retry.", issue));
+    return true;
+}
+
 /** 单个目标的完整运行流程:读记忆 → 参数弹窗(预填)→ 写记忆 → 展开 → 任务终端。
  *  stale(2026-10-13):仅 Ctrl+F10 源文件路径传入(源/安装双路径)——参数确认 + 展开成功后,
  *  若源比安装产物新,弹一条非模态警告气泡(纯附加,不等待不拦截;2026-10-14 起带「不再显示」按钮);面板/▶ 路径不传不查。 */
 async function executeRunSelection(workspaceRoot: string, pkg: string, executable: string, stale?: { srcPath?: string; installPath?: string }): Promise<void> {
-    const memory = await readSelectionMemory(workspaceRoot, ros2RunMemoryId(pkg, executable));
+    const memory = await readSelectionMemory(ros2RunMemoryId(pkg, executable));
     const pick = await pickPresets(readRosRunSpec(), {
         title: vscode.l10n.t("Run {0}/{1} - run arguments", pkg, executable),
         placeholder: "勾选要追加的参数(多选;不勾则用模板默认)",
         customTitle: vscode.l10n.t("Run {0}/{1} - run arguments", pkg, executable),
-        customPlaceholder: vscode.l10n.t("e.g. --ros-args -r __node:=demo (empty input = no arguments)"),
         customValue: memory.custom,
         remembered: { picked: memory.picked, custom: memory.custom.length > 0 },
+        factory: ROS2_RUN_SPEC,
     });
     if (pick === undefined) {
-        log.trace("User cancelled at argument selection");
+        log.trace(vscode.l10n.t("User cancelled at argument selection"));
         return;
     }
-    await writeSelectionMemory(workspaceRoot, ros2RunMemoryId(pkg, executable), {
+    await writeSelectionMemory(ros2RunMemoryId(pkg, executable), {
         picked: pick.picked,
         custom: pick.custom ?? "",
     });
 
     const expanded = expandRos2Run({ pkg, executable, picked: pick.picked, custom: pick.custom });
     if (expanded.empty) {
-        vscode.window.showErrorMessage(vscode.l10n.t("Run command expanded to empty; cancelled. Check the template in setting ROS2.run.shareSpec."));
+        vscode.window.showErrorMessage(vscode.l10n.t("Run command expanded to empty; cancelled. Check the template in setting ROS2.tool.run.template."));
         return;
     }
     // 运行照常先行;陈旧附加警告(2026-10-13,用户裁定「附加不阻碍」)随后——不等待,2026-10-14 起为警告气泡+「不再显示」按钮
@@ -68,6 +84,9 @@ export async function runRosExecutable(data: RunDataSource | null): Promise<void
     }
     if (data === null) {
         vscode.window.showErrorMessage(vscode.l10n.t("Executable info not ready; cannot run (please wait and retry)"));
+        return;
+    }
+    if (refuseIfNoEnvAtEntry("panel")) {
         return;
     }
     const packages = await data.listPackages();
@@ -98,6 +117,9 @@ export async function runRosExecutable(data: RunDataSource | null): Promise<void
 export async function runActiveEditor(data: RunDataSource | null, srcPath: string): Promise<void> {
     if (data === null) {
         vscode.window.showErrorMessage(vscode.l10n.t("Executable info not ready; cannot run (please wait and retry)"));
+        return;
+    }
+    if (refuseIfNoEnvAtEntry("active-editor")) {
         return;
     }
     const owners = await data.ownersOfSource(srcPath);
@@ -133,6 +155,9 @@ export async function runExecutableFromTree(req: { pkg: string; executable: stri
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (workspaceRoot === undefined) {
         vscode.window.showErrorMessage(vscode.l10n.t("No workspace folder found"));
+        return;
+    }
+    if (refuseIfNoEnvAtEntry("tree")) {
         return;
     }
     await executeRunSelection(workspaceRoot, req.pkg, req.executable, stale);

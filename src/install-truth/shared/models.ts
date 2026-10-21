@@ -270,8 +270,8 @@ export interface AreaFile {
     generated: boolean;
     /** 源落点(由记录推出;**只拼字符串,不判存在性** —— README §2.2) */
     sourcePath?: string;
-    /** `sourcePath` 从哪条记录得来 */
-    sourceEvidence?: "jump-record" | "install-rule" | "python-rootmap";
+    /** `sourcePath` 从哪条记录得来(`develop-link` = develop/目录链的镜像链真目标,2026-10-20) */
+    sourceEvidence?: "jump-record" | "install-rule" | "python-rootmap" | "develop-link";
     /**
      * **内容来源引用**(2026-09-25 第五批,用户裁定"悬浮消息栏显示内容来源,让用户可逆搜索"):
      *  · `安装规则 cmake_install.cmake` / `安装规则 ament_cmake_symlink_install.cmake` —— 可到 build/<pkg>/ 下查证;

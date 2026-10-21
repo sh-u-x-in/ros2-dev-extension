@@ -7,6 +7,7 @@
 
 | 项 | 现状 |
 |:--|:--|
+| 2026-10-18 (接口名诊断) | **.msg/.srv/.action 文件名合规诊断(rosidl 构建期同判)**:新增 parse/interface-name.ts 纯函数镜像(正则 ^[A-Z][A-Za-z0-9]*$ + Sample_ 前缀单剥 + 五生成后缀按序剥不 break + srv/action 按构造名判定);analyzeDocument 顶部合入 Error 级文件级诊断(打开/编辑防抖路径自动获得)+ registerRosMessageDiagnostics 增 onDidCreateFiles 监听(兜"新建未打开",isStarted 同门+statSync isFile 防目录误配);触发=新建+打开(用户裁定范围) |
 | 注册 | extension.ts registerRosMessageProviders(context)(仅激活一次,不随环境重注册) |
 | 实例 | MessageIndex(data/message-index.ts 门面,组装 WorkspaceIndex + SystemIndex)在注册处创建,5 类提供器共享 |
 | 事件 | 系统索引重建 = 事件链(core.refreshSystem → ev.system → PackageMap.onSystemListChanged,2026-09-04 C 收尾);配置变化 → 刷新间隔动态生效 |
@@ -20,8 +21,8 @@
 |:--|:--|:--|
 | 根 | index.ts(7) | 域唯一出口:registerRosMessageProviders + MessageIndex + 类型 |
 | shared/ | interface-data.ts(43) | BUILTIN_TYPES(17)/COMMON_PACKAGES(9)/isBuiltinType(byte/char 已标注废弃,2026-09-04 R14) |
-| parse/ | rosmsg-document.ts(333)· formatter.ts(262)· semantic-token-builder.ts(51) | 纯结构解析(含 invalidLines/getCompletionContext)/ 格式化纯函数 / token 数据纯函数(R13 后无运行消费者,单测保留) |
-| ui/ | providers.ts(622)· completion-provider.ts(222)· diagnostic-provider.ts(212) | 4 类提供器 + 注册(注入共享 PackageMap)/ 两段式补全 / 诊断(analyzeDocument 纯逻辑可测) |
+| parse/ | rosmsg-document.ts(333)· formatter.ts(262)· semantic-token-builder.ts(51)· interface-name.ts(59) | 纯结构解析(含 invalidLines/getCompletionContext)/ 格式化纯函数 / token 数据纯函数(R13 后无运行消费者,单测保留) / 接口名合规判定(rosidl 语义镜像,零 vscode 依赖) |
+| ui/ | providers.ts(622)· completion-provider.ts(222)· diagnostic-provider.ts(342) | 4 类提供器 + 注册(注入共享 PackageMap)/ 两段式补全 / 诊断(analyzeDocument 纯逻辑可测 + interfaceNameViolation 接口名诊断) |
 | data/ | tables.ts(三表核心)· message-index.ts(门面)· workspace-index.ts(工作区子索引)· system-index.ts(系统子索引)· types.ts(常量/类型/载荷) | tables = **写线三表 + 读线两表 + 四个事件 + op 流**(纯 TS,可无头测);工作区子索引 = 包表消费(R1/R2/R3)+ .msg 事件接线 + 兜底重扫 + 节流 + 缓存;系统索引 = interface_list/二分/缓存 |
 | 根 | 02-rosmsg模块审计.md · README.md | 审计+修复记录(2026-09-03)/ 本文件 |
 
@@ -87,7 +88,7 @@
 
 ## 7. 测试覆盖
 
-10 套件:rosmsg-tables(新增:三表/四事件/op 流/读写一致性)/ rosmsg-document / rosmsg-formatter / rosmsg-diagnostics / rosmsg-samples-parser / rosmsg-samples-providers(R10 适配 PackageMap 注入)/ message-index-cache(v4 正表快照,重写)/ semantic-token-builder / ros-msg-providers(旧大套件)/ package-map(补原子事件用例)。缺口:parseMessageFile 缓存/磁盘读写/ensureSystemFresh 无直接单测(类同旧)。
+11 套件:rosmsg-tables(新增:三表/四事件/op 流/读写一致性)/ rosmsg-document / rosmsg-formatter / rosmsg-diagnostics / rosmsg-interface-name(新增:接口名合规判定 rosidl 镜像,纯函数)/ rosmsg-samples-parser / rosmsg-samples-providers(R10 适配 PackageMap 注入)/ message-index-cache(v4 正表快照,重写)/ semantic-token-builder / ros-msg-providers(旧大套件)/ package-map(补原子事件用例)。缺口:parseMessageFile 缓存/磁盘读写/ensureSystemFresh 无直接单测(类同旧)。
 
 ## 修改记录
 
@@ -95,6 +96,8 @@
 
 | 时间(精确到分钟) | 说明 |
 |:--|:--|
+| 2026-10-18 22:44 | **接口名合规诊断(用户裁定范围=只做文件名错误,触发新建/打开)**:新增 parse/interface-name.ts(59 行,零 vscode 依赖)——rosidl `is_valid_message_name` 逐行镜像(Sample_ 前缀单剥/五生成后缀按序剥**不 break** 连环剥/模式 ^[A-Z][A-Za-z0-9]*$;srv/action 按 parse_service_string/parse_action_string 同款构造名判定,故 Foo_Goal.msg 合法而 Foo_Request.srv 非法,与构建期逐位一致;事实源 rolling eb927ae);diagnostic-provider 增 interfaceNameViolation(Error 级文件级诊断,range 钉首行;analyzeDocument 顶部合入=打开/编辑防抖自动获得)+ 注册层新 onDidCreateFiles 监听(新建未打开兜底,isStarted 同门+scheme=file+statSync isFile 守卫)入 disposables;本地 docKindOf 迁 parse 层单一出处;nls +1 键(诊断文案 l10n 化——本文件四条旧诊断仍硬编码中文为既有欠账);测试=新套件 rosmsg-interface-name 16 例(纯)+ rosmsg-diagnostics 扩 5 例(severity 计数识别对宿主语言中立);全量 1420/0(基线 1399+21);i18n 审计缺翻译仍 1/死键仍 32 零新增 |
+| 2026-10-18 05:12 | **用户排除后剪枝接入(用户裁定"内置=前剪枝/用户=后剪枝")**:workspace-index 全量刷新结果后过滤 + watcher/rename/缓存装载四口事件面双判(isProductSegmentPath ∪ isPathExcludedNormalized,path-exclude 新 normalize 出口),排除集随全量刷新重解析事件期复用;providers 接 excludeFolders 变化 → refreshWorkspace;nls 摘 launch 半句(见 package.nls) |
 | 2026-09-03 23:10 | 建档(独立/完善):将散于代码头部注释与历次修复中的 rosmsg 模块信息独立为本 README——文件清单(当前行数/职责)、三层数据源与查询链、刷新时机、设计决策记录(v3→v4/R1-R13)、配置项、现状与遗留、测试覆盖;关联 02-rosmsg模块审计.md |
 | 2026-09-03 23:16 | resolvePackageDir 接入:providers 经组合根共享实例(sharedPackageMap),删除本地 pkg_list/pkg_prefix(原 resolvePkgFilter 整体移除);系统包目录 = 触发懒取并等待(单飞 + 缓存);§3.2/§6 同步 |
 | 2026-09-03 23:52 | 瘦身(R2 闭环):删自持 package.xml watcher + refreshPackageNames/handlePackageXmlEvent/packageNameByDir;名单实时读门面(workspaceNameByDir)+ 订阅 core.onDidChange(workspace 域)重扫;仅留 .msg watcher;增量/查询同口径,R7 rename 残留顺带缓解 |

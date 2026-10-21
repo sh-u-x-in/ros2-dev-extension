@@ -33,10 +33,23 @@ export class MessageIndex {
         this.packages = packages;
     }
 
-    /** 启动:工作区(包表就绪 → 基线 walk → 监听;兜底定时器由节流待命)+ 系统(按需刷新) */
+    /** 启动单飞(2026-10-18 P2:修历史双 initialize 缺陷——重复调用曾导致二次全量 walk/订阅覆盖泄漏/双份 interface list) */
+    private startPromise: Promise<void> | undefined;
+
+    /** 是否已启动(查询/诊断入口与事件回调的门;未启动时一律跳过后台活动) */
+    isStarted(): boolean {
+        return this.startPromise !== undefined;
+    }
+
+    /** 启动:工作区(包表就绪 → 基线 walk → 监听;兜底定时器由节流待命)+ 系统(按需刷新)。幂等单飞 */
     async initialize(): Promise<void> {
-        await this.ws.initialize();
-        this.sys.initialize();
+        if (!this.startPromise) {
+            this.startPromise = (async () => {
+                await this.ws.initialize();
+                this.sys.initialize();
+            })();
+        }
+        return this.startPromise;
     }
 
     /** 全量重扫工作区消息(委托;兜底重扫/手动) */

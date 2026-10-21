@@ -14,6 +14,7 @@ import { getLogger } from "../../logger";
 import * as vscode from "vscode";
 
 import { ensureErrorMessageOnException } from "../../error-utils";
+import { GATE_REFUSALS, registerGatedCommand } from "../../commands/gated-command";
 import { ShowDaemonStatusCommand, RosdepCommand, DoctorCommand } from "../host/commands";
 import { composeApi } from "../api";
 import type { Ros2ServiceApi, RosTaskRunner } from "../api";
@@ -46,21 +47,22 @@ export function registerCoreCommands(context: vscode.ExtensionContext): void {
        与 Test Explorer 无关联、易误导(旧注释自陈 findPackageTestFiles 未实现恒为空)。
        测试入口统一为测试视图 + `ROS2.tests.refresh` / `ROS2.tests.runAll`。 */
 
-    // 2026-09-29:doctor/rosdep 命令串设置化(ROS2.run.doctorCommand / rosdepCommand,注册层读设置
-    // 经 splitShellArgs 切词成 argv 下发;ros2/ 本体零设置读取,依赖方向不破;缺省串由设置 default 提供)
-    vscode.commands.registerCommand(RosdepCommand, () => {
-        ensureErrorMessageOnException(() => {
-            log.trace(vscode.l10n.t("Executing command: {0}", RosdepCommand));
-            const setting = vscode.workspace.getConfiguration("ROS2").get<string>("run.rosdepCommand");
-            const argv = setting ? splitShellArgs(setting) : undefined;
-            return rosTaskRunner.rosdep(argv ? { argv } : {});
-        });
+    // 2026-09-29:doctor/rosdep 命令串设置化(ROS2.tool.doctorCommand / rosdepCommand,2026-10-18 键族迁
+    // `tool.` 层;注册层读设置经 splitShellArgs 切词成 argv 下发;ros2/ 本体零设置读取,依赖方向不破;
+    // 缺省串由设置 default 提供)
+    // 2026-10-18(P1):rosdep 入统一命令围栏(门关一句拒绝,与执行层 rosdep 门同键);
+    // doctor 设计豁免(无环境时恰恰需要它诊断)
+    registerGatedCommand(RosdepCommand, { getIssue: () => composeApi.environment.getEnvIssue(), refuse: GATE_REFUSALS.rosdep }, () => {
+        log.trace(vscode.l10n.t("Executing command: {0}", RosdepCommand));
+        const setting = vscode.workspace.getConfiguration("ROS2").get<string>("tool.rosdepCommand");
+        const argv = setting ? splitShellArgs(setting) : undefined;
+        return rosTaskRunner.rosdep(argv ? { argv } : {});
     });
 
     vscode.commands.registerCommand(DoctorCommand, () => {
         ensureErrorMessageOnException(() => {
             log.trace(vscode.l10n.t("Executing command: {0}", DoctorCommand));
-            const setting = vscode.workspace.getConfiguration("ROS2").get<string>("run.doctorCommand");
+            const setting = vscode.workspace.getConfiguration("ROS2").get<string>("tool.doctorCommand");
             const argv = setting ? splitShellArgs(setting) : undefined;
             return rosTaskRunner.doctor(argv ? { argv } : {});
         });

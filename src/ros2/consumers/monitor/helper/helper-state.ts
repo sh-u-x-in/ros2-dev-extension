@@ -1,8 +1,8 @@
 /**
  * @file helper-state.ts
  * 常驻助手在线状态唯一事实源(consumers/ 内部,组件间变量互通)。
- * 2026-10-06 重设计语义:在线 = 已连接共享助手服务端(hello 握手完成)。
- *   - 写路径:param-helper-client 的连接生命周期(hello_ack 到达=在线;连接断开=离线),事件驱动无轮询;
+ * 2026-10-06 重设计语义:在线 = 已连接共享助手服务端(resync 回应到达)。
+ *   - 写路径:param-helper-client 的连接生命周期(resync 回应到达=在线;连接断开=离线),事件驱动无轮询;
  *   - 读路径:订阅 onHelperRunningChanged(状态栏订阅翻转显示)/轮询读。
  * 纯内部模块,不建 api 契约;无 vscode 依赖,可单测。
  */

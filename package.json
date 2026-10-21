@@ -1,6 +1,6 @@
 {
     "name": "ros2-dev-extension",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "publisher": "sh-u-x-in",
     "engines": {
         "vscode": "^1.101.0"
@@ -79,7 +79,7 @@
                     "name": "%views.installTruth.name%",
                     "icon": "media/ros2-packages.svg",
                     "contextualTitle": "%views.installTruth.contextualTitle%",
-                    "when": "ros2.hasPackageXml"
+                    "when": "ros2.hasPackageXml && ros2.hasRosEnvironment"
                 }
             ]
         },
@@ -312,6 +312,12 @@
                 "category": "ROS2",
                 "icon": "$(play)",
                 "when": "false"
+            },
+            {
+                "command": "ROS2.sidebar.openInstallSide",
+                "title": "%command.ROS2.sidebar.openInstallSide.title%",
+                "category": "ROS2",
+                "when": "false"
             }
         ],
         "terminal": {
@@ -342,20 +348,17 @@
                 {
                     "command": "ROS2.sidebar.refresh",
                     "when": "view == ros2.installTruth",
-                    "group": "navigation",
-                    "order": 1
+                    "group": "navigation@1"
                 },
                 {
                     "command": "ROS2.sidebar.hideLeftovers",
-                    "when": "view == ros2.installTruth && config.ROS2.ui.showLeftovers",
-                    "group": "navigation",
-                    "order": 2
+                    "when": "view == ros2.installTruth && ros2.sidebar.leftoversShown",
+                    "group": "navigation@2"
                 },
                 {
                     "command": "ROS2.sidebar.showLeftovers",
-                    "when": "view == ros2.installTruth && !config.ROS2.ui.showLeftovers",
-                    "group": "navigation",
-                    "order": 2
+                    "when": "view == ros2.installTruth && !ros2.sidebar.leftoversShown",
+                    "group": "navigation@2"
                 }
             ],
             "view/item/context": [
@@ -373,6 +376,11 @@
                     "command": "ROS2.sidebar.buildPackage",
                     "when": "view == ros2.installTruth && viewItem == ros2.installTruth.package",
                     "group": "inline"
+                },
+                {
+                    "command": "ROS2.sidebar.openInstallSide",
+                    "when": "view == ros2.installTruth && (viewItem == ros2.installTruth.file || viewItem == ros2.installTruth.file.executable || viewItem == ros2.installTruth.file.launch)",
+                    "group": "1_install"
                 }
             ],
             "explorer/context": [
@@ -474,6 +482,12 @@
                             "type": "string"
                         },
                         "description": "%config.ROS2.env.systemWatchFiles.description%"
+                    },
+                    "ROS2.env.allowEmptyWorkspace": {
+                        "order": 5,
+                        "type": "boolean",
+                        "default": false,
+                        "description": "%config.ROS2.env.allowEmptyWorkspace.description%"
                     }
                 }
             },
@@ -496,58 +510,27 @@
                         ],
                         "description": "%config.ROS2.build.installLayout.description%"
                     },
-                    "ROS2.build.shareSpec": {
+                    "ROS2.build.template": {
                         "order": 3,
+                        "type": "string",
+                        "default": "colcon ${1} build ${install_method} ${install_layout} ${2} --base-paths ${base_path} ${packages_select} ${clean} --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                        "markdownDescription": "%config.ROS2.build.template.description%"
+                    },
+                    "ROS2.build.presets": {
+                        "order": 4,
                         "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
                         "default": {
-                            "template": "colcon ${1} build ${install_method} ${install_layout} --event-handlers console_cohesion+ ${2} --base-paths ${base_path} ${packages_select} ${clean} --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-                            "custom": "Custom input: hand-write arbitrary colcon arguments (multiple segments and quotes allowed). Add ${0} to the template to enable this entry (unused in the default template)",
-                            "argv_list": [
-                                {
-                                    "argv": "--log-level debug",
-                                    "describe": "Verbose output 1/2: turn on debug logging"
-                                },
-                                {
-                                    "argv": "log_command+",
-                                    "describe": "Verbose output 2/2: log every command invoked"
-                                }
-                            ]
+                            "Custom input: hand-write arbitrary colcon arguments (multiple segments and quotes allowed). Add ${0} to the template to enable this entry (unused in the default template)": "e.g. --continue-on-error --cmake-args -DCMAKE_BUILD_TYPE=Debug",
+                            "1|Verbose output 1/2: turn on debug logging": "--log-level debug",
+                            "2|Verbose output 2/2: cohesive console event output": "--event-handlers console_cohesion+"
                         },
-                        "properties": {
-                            "template": {
-                                "type": "string",
-                                "description": "%config.ROS2.build.shareSpec.desc.template%"
-                            },
-                            "custom": {
-                                "type": "string",
-                                "description": "%config.ROS2.build.shareSpec.desc.custom%"
-                            },
-                            "argv_list": {
-                                "type": "array",
-                                "description": "%config.ROS2.build.shareSpec.desc.argv_list%",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "argv": {
-                                            "type": "string",
-                                            "description": "%config.ROS2.build.shareSpec.desc.argv%"
-                                        },
-                                        "describe": {
-                                            "type": "string",
-                                            "description": "%config.shareSpec.desc.describe%"
-                                        }
-                                    },
-                                    "required": [
-                                        "argv",
-                                        "describe"
-                                    ]
-                                }
-                            }
-                        },
-                        "markdownDescription": "%config.ROS2.build.shareSpec.description%"
+                        "markdownDescription": "%config.ROS2.build.presets.description%"
                     },
                     "ROS2.build.preflightWarnings": {
-                        "order": 4,
+                        "order": 5,
                         "type": "string",
                         "enum": [
                             "on",
@@ -561,12 +544,6 @@
                             "%config.ROS2.build.preflightWarnings.enum.ignore-silent-noop%"
                         ],
                         "description": "%config.ROS2.build.preflightWarnings.description%"
-                    },
-                    "ROS2.build.allowEmptyWorkspace": {
-                        "order": 5,
-                        "type": "boolean",
-                        "default": true,
-                        "description": "%config.ROS2.build.allowEmptyWorkspace.description%"
                     },
                     "ROS2.build.installMethod": {
                         "order": 1,
@@ -589,111 +566,63 @@
             {
                 "title": "%config.title.runLaunch%",
                 "properties": {
-                    "ROS2.run.shareSpec": {
+                    "ROS2.tool.run.template": {
                         "order": 1,
-                        "type": "object",
-                        "default": {
-                            "template": "ros2 run ${pkg} ${executable} ${0}",
-                            "custom": "Run arguments: arguments passed to the executable (multiple segments and quotes allowed; empty input = no arguments)",
-                            "argv_list": []
-                        },
-                        "properties": {
-                            "template": {
-                                "type": "string",
-                                "description": "%config.ROS2.run.shareSpec.desc.template%"
-                            },
-                            "custom": {
-                                "type": "string",
-                                "description": "%config.ROS2.run.shareSpec.desc.custom%"
-                            },
-                            "argv_list": {
-                                "type": "array",
-                                "description": "%config.ROS2.run.shareSpec.desc.argv_list%",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "argv": {
-                                            "type": "string",
-                                            "description": "%config.shareSpec.desc.argv%"
-                                        },
-                                        "describe": {
-                                            "type": "string",
-                                            "description": "%config.shareSpec.desc.describe%"
-                                        }
-                                    },
-                                    "required": [
-                                        "argv",
-                                        "describe"
-                                    ]
-                                }
-                            }
-                        },
-                        "markdownDescription": "%config.ROS2.run.shareSpec.description%"
+                        "type": "string",
+                        "default": "ros2 run ${pkg} ${executable} ${0}",
+                        "markdownDescription": "%config.ROS2.tool.run.template.description%"
                     },
-                    "ROS2.launch.yamlDefinitionEnabled": {
-                        "order": 1,
-                        "type": "boolean",
-                        "default": true,
-                        "description": "%config.ROS2.launch.yamlDefinitionEnabled.description%"
-                    },
-                    "ROS2.launch.shareSpec": {
+                    "ROS2.tool.run.presets": {
                         "order": 2,
                         "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
                         "default": {
-                            "template": "ros2 launch ${pkg} ${launch_file} ${0}",
-                            "custom": "Launch arguments: arguments passed to the launch file (multiple segments and quotes allowed, e.g. x:=1 y:=2; empty input = no arguments)",
-                            "argv_list": []
+                            "Run arguments: arguments passed to the executable (multiple segments and quotes allowed; empty input = no arguments)": "e.g. --ros-args -r __node:=demo (empty input = no arguments)"
                         },
-                        "properties": {
-                            "template": {
-                                "type": "string",
-                                "description": "%config.ROS2.launch.shareSpec.desc.template%"
-                            },
-                            "custom": {
-                                "type": "string",
-                                "description": "%config.ROS2.launch.shareSpec.desc.custom%"
-                            },
-                            "argv_list": {
-                                "type": "array",
-                                "description": "%config.ROS2.launch.shareSpec.desc.argv_list%",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "argv": {
-                                            "type": "string",
-                                            "description": "%config.shareSpec.desc.argv%"
-                                        },
-                                        "describe": {
-                                            "type": "string",
-                                            "description": "%config.shareSpec.desc.describe%"
-                                        }
-                                    },
-                                    "required": [
-                                        "argv",
-                                        "describe"
-                                    ]
-                                }
-                            }
-                        },
-                        "markdownDescription": "%config.ROS2.launch.shareSpec.description%"
+                        "markdownDescription": "%config.ROS2.tool.run.presets.description%"
                     },
-                    "ROS2.run.doctorCommand": {
+                    "ROS2.tool.run.staleWarning": {
                         "order": 3,
-                        "type": "string",
-                        "default": "ros2 doctor --report",
-                        "description": "%config.ROS2.run.doctorCommand.description%"
-                    },
-                    "ROS2.run.rosdepCommand": {
-                        "order": 4,
-                        "type": "string",
-                        "default": "rosdep install --from-paths src --ignore-src -r -y",
-                        "description": "%config.ROS2.run.rosdepCommand.description%"
-                    },
-                    "ROS2.run.staleWarning": {
-                        "order": 5,
                         "type": "boolean",
                         "default": true,
-                        "description": "%config.ROS2.run.staleWarning.description%"
+                        "description": "%config.ROS2.tool.run.staleWarning.description%"
+                    },
+                    "ROS2.tool.launch.template": {
+                        "order": 4,
+                        "type": "string",
+                        "default": "ros2 launch ${pkg} ${launch_file} ${0}",
+                        "markdownDescription": "%config.ROS2.tool.launch.template.description%"
+                    },
+                    "ROS2.tool.launch.presets": {
+                        "order": 5,
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "default": {
+                            "Launch arguments: arguments passed to the launch file (multiple segments and quotes allowed, e.g. x:=1 y:=2; empty input = no arguments)": "e.g. x:=1 y:=2"
+                        },
+                        "markdownDescription": "%config.ROS2.tool.launch.presets.description%"
+                    },
+                    "ROS2.tool.launch.yamlDefinitionEnabled": {
+                        "order": 6,
+                        "type": "boolean",
+                        "default": true,
+                        "description": "%config.ROS2.tool.launch.yamlDefinitionEnabled.description%"
+                    },
+                    "ROS2.tool.doctorCommand": {
+                        "order": 7,
+                        "type": "string",
+                        "default": "ros2 doctor --report",
+                        "description": "%config.ROS2.tool.doctorCommand.description%"
+                    },
+                    "ROS2.tool.rosdepCommand": {
+                        "order": 8,
+                        "type": "string",
+                        "default": "rosdep install --from-paths src --ignore-src -r -y",
+                        "description": "%config.ROS2.tool.rosdepCommand.description%"
                     }
                 }
             },
@@ -748,48 +677,104 @@
                         "default": false,
                         "description": "%config.ROS2.search.followSymlinks.description%"
                     },
-                    "ROS2.search.walkTimeouts": {
+                    "ROS2.search.walkTimeout.message.totalTimeoutMs": {
                         "order": 3,
-                        "type": "array",
-                        "default": [],
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "type": {
-                                    "type": "string",
-                                    "enum": [
-                                        "default",
-                                        "message",
-                                        "test",
-                                        "xacro",
-                                        "package"
-                                    ]
-                                },
-                                "totalTimeoutMs": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                },
-                                "branchTimeoutMs": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                },
-                                "maxDepth": {
-                                    "type": "integer",
-                                    "minimum": 0
-                                }
-                            }
-                        },
-                        "description": "%config.ROS2.search.walkTimeouts.description%"
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 10000,
+                        "description": "%config.ROS2.search.walkTimeout.message.totalTimeoutMs.description%"
                     },
-                    "ROS2.packages.refreshMs": {
+                    "ROS2.search.walkTimeout.message.branchTimeoutMs": {
                         "order": 4,
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 2000,
+                        "description": "%config.ROS2.search.walkTimeout.message.branchTimeoutMs.description%"
+                    },
+                    "ROS2.search.walkTimeout.message.maxDepth": {
+                        "order": 5,
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 8,
+                        "description": "%config.ROS2.search.walkTimeout.message.maxDepth.description%"
+                    },
+                    "ROS2.search.walkTimeout.xacro.totalTimeoutMs": {
+                        "order": 6,
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 10000,
+                        "description": "%config.ROS2.search.walkTimeout.xacro.totalTimeoutMs.description%"
+                    },
+                    "ROS2.search.walkTimeout.xacro.branchTimeoutMs": {
+                        "order": 7,
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 2000,
+                        "description": "%config.ROS2.search.walkTimeout.xacro.branchTimeoutMs.description%"
+                    },
+                    "ROS2.search.walkTimeout.xacro.maxDepth": {
+                        "order": 8,
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 8,
+                        "description": "%config.ROS2.search.walkTimeout.xacro.maxDepth.description%"
+                    },
+                    "ROS2.search.walkTimeout.package.totalTimeoutMs": {
+                        "order": 9,
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 10000,
+                        "description": "%config.ROS2.search.walkTimeout.package.totalTimeoutMs.description%"
+                    },
+                    "ROS2.search.walkTimeout.package.branchTimeoutMs": {
+                        "order": 10,
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 2000,
+                        "description": "%config.ROS2.search.walkTimeout.package.branchTimeoutMs.description%"
+                    },
+                    "ROS2.search.walkTimeout.package.maxDepth": {
+                        "order": 11,
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 8,
+                        "description": "%config.ROS2.search.walkTimeout.package.maxDepth.description%"
+                    },
+                    "ROS2.search.walkTimeout.test.totalTimeoutMs": {
+                        "order": 12,
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 30000,
+                        "description": "%config.ROS2.search.walkTimeout.test.totalTimeoutMs.description%"
+                    },
+                    "ROS2.search.walkTimeout.test.branchTimeoutMs": {
+                        "order": 13,
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 5000,
+                        "description": "%config.ROS2.search.walkTimeout.test.branchTimeoutMs.description%"
+                    },
+                    "ROS2.search.walkTimeout.test.maxDepth": {
+                        "order": 14,
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 12,
+                        "description": "%config.ROS2.search.walkTimeout.test.maxDepth.description%"
+                    }
+                }
+            },
+            {
+                "title": "%config.title.packages%",
+                "properties": {
+                    "ROS2.packages.refreshMs": {
+                        "order": 1,
                         "type": "integer",
                         "default": 60000,
                         "minimum": 0,
                         "description": "%config.ROS2.packages.refreshMs.description%"
                     },
                     "ROS2.packages.userIndex": {
-                        "order": 5,
+                        "order": 2,
                         "type": "object",
                         "default": {},
                         "additionalProperties": {
@@ -854,26 +839,26 @@
                         "type": "boolean",
                         "default": false,
                         "description": "%config.ROS2.ide.clangdTidy.description%"
+                    },
+                    "ROS2.ide.maintainPythonPaths": {
+                        "order": 6,
+                        "type": "boolean",
+                        "default": true,
+                        "description": "%config.ROS2.ide.maintainPythonPaths.description%"
                     }
                 }
             },
             {
                 "title": "%config.title.ui%",
                 "properties": {
-                    "ROS2.ui.autoShowOutput": {
-                        "order": 1,
-                        "type": "boolean",
-                        "default": true,
-                        "description": "%config.ROS2.ui.autoShowOutput.description%"
-                    },
                     "ROS2.ui.showWelcomeOnStartup": {
-                        "order": 2,
+                        "order": 1,
                         "type": "boolean",
                         "default": true,
                         "description": "%config.ROS2.ui.showWelcomeOnStartup.description%"
                     },
                     "ROS2.ui.showLeftovers": {
-                        "order": 3,
+                        "order": 2,
                         "type": "boolean",
                         "default": false,
                         "description": "%config.ROS2.ui.showLeftovers.description%"

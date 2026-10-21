@@ -37,7 +37,7 @@ describe("RosTaskRunner 纯函数:rosdep/doctor", () => {
         assert.deepStrictEqual(runner.toRosdepCommand({ workspace: "/ws/src" }), ["install", "--from-paths", "/ws/src", "--ignore-src", "-r", "-y"]);
     });
 
-    it("toDoctorCommand:ros2 doctor", () => {
-        assert.deepStrictEqual(runner.toDoctorCommand(), ["doctor"]);
+    it("toDoctorCommand:ros2 doctor --report(对齐 manifest 默认,2026-10-18 兜底对齐)", () => {
+        assert.deepStrictEqual(runner.toDoctorCommand(), ["doctor", "--report"]);
     });
 });

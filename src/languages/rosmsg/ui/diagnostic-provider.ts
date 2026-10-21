@@ -9,6 +9,7 @@
  *    "就绪后不重算"两类时序误报,见 03-诊断接电.md)
  *  - 废弃类型(byte/char)→ warning(建议 uint8/int8)
  *  - 自包含(字段类型无包名且等于当前消息名)→ error(递归依赖)
+ *  - 接口名不合规(文件基名)→ error(rosidl 构建期同判,判定见 parse/interface-name.ts)
  */
 
 import * as vscode from "vscode";
@@ -18,18 +19,39 @@ import { getLogger } from "../../../logger";
 import { isBuiltinType } from "../shared/interface-data";
 import { MessageIndex } from "../data/message-index";
 import { parseRosMessageDocument } from "../parse/rosmsg-document";
+import {
+    interfaceKindOf,
+    isRosidlCompliantInterfaceName,
+    ROSIDL_MESSAGE_NAME_PATTERN
+} from "../parse/interface-name";
 import type { PackageMap } from "../../shared/package-map";
 
 /** 扩展日志薄封装(带 msg-diagnostics 模块前缀) */
 const log = getLogger("msg-diagnostics");
 
-/** 当前文档的接口种类(.msg→msg / .srv→srv / .action→action;其它 → undefined) */
-function docKindOf(fileName: string): "msg" | "srv" | "action" | undefined {
-    const ext = path.extname(fileName).toLowerCase();
-    if (ext === ".msg") { return "msg"; }
-    if (ext === ".srv") { return "srv"; }
-    if (ext === ".action") { return "action"; }
-    return undefined;
+/**
+ * 接口名合规诊断(文件级):非接口文件或合规 → undefined;Error 级,范围钉首行(文件级问题无正文落点)。
+ * 判定与 rosidl 构建期逐位对齐(parse/interface-name.ts);导出供单元测试与 onDidCreateFiles
+ * (新建路径,文件未打开、无 TextDocument 可分析)复用
+ */
+export function interfaceNameViolation(fileName: string): vscode.Diagnostic | undefined {
+    const kind = interfaceKindOf(fileName);
+    if (kind === undefined) {
+        return undefined;
+    }
+    const basename = path.basename(fileName, path.extname(fileName));
+    if (isRosidlCompliantInterfaceName(kind, basename)) {
+        return undefined;
+    }
+    return new vscode.Diagnostic(
+        new vscode.Range(0, 0, 0, 1),
+        vscode.l10n.t(
+            '"{0}" is not a valid ROS 2 interface name (rosidl pattern {1}: must start with an uppercase letter, letters and digits only)',
+            basename,
+            ROSIDL_MESSAGE_NAME_PATTERN
+        ),
+        vscode.DiagnosticSeverity.Error
+    );
 }
 
 /** 标准布局 FS 点查(RE-1 三级判定第③级):<包目录>/<kind>/<Name>.<ext> 存在 */
@@ -56,6 +78,12 @@ export async function analyzeDocument(
     packages?: PackageMap
 ): Promise<vscode.Diagnostic[]> {
     const diagnostics: vscode.Diagnostic[] = [];
+    // 0. 接口名合规(文件级):基名不合规包必编译失败(rosidl_adapter 在 CMake configure 期即抛),
+    //    打开/编辑瞬间就报 Error,不必等构建
+    const nameViolation = interfaceNameViolation(document.fileName);
+    if (nameViolation) {
+        diagnostics.push(nameViolation);
+    }
     const doc = parseRosMessageDocument(document);
 
     // 1. 结构错误:分隔线数量、数组语法、非法行、常量缺值、疑似 --- 等,
@@ -106,7 +134,7 @@ export async function analyzeDocument(
     const fullSelf = `${selfPkg}/${selfName}`;
     const allFields = doc.sections.flatMap(s => s.fields);
     // RE-1:当前文档接口种类(FS 点查第③级用;非三类接口文件 → 无③级)
-    const kind = docKindOf(document.fileName);
+    const kind = interfaceKindOf(document.fileName);
     // 2026-09-03 R12:包内消息名一次性缓存(同包多字段只查一次索引),避免逐字段重复查询
     const namesByPkg = new Map<string, Set<string>>();
     const namesOf = (pkg: string): Set<string> => {
@@ -188,7 +216,7 @@ export async function analyzeDocument(
 }
 
 /**
- * 注册 rosmsg 诊断:监听文档打开/变化,防抖分析并写入诊断集合
+ * 注册 rosmsg 诊断:监听文档打开/变化/新建,防抖分析并写入诊断集合
  *
  * 日志走统一接口 getLogger("msg-diagnostics"),级别与扩展习惯一致:
  *  - trace:编辑事件、执行分析等详细流程
@@ -205,7 +233,9 @@ export async function analyzeDocument(
 export function registerRosMessageDiagnostics(
     context: vscode.ExtensionContext,
     index: MessageIndex,
-    packages?: PackageMap
+    packages?: PackageMap,
+    /** P2 start 化:索引是否已启动(未启动时分析/初始全算一律跳过——门关零后台) */
+    isStarted?: () => boolean
 ): { disposables: vscode.Disposable[]; reanalyzeAll(): void } {
     void context;
     const collection = vscode.languages.createDiagnosticCollection("rosmsg");
@@ -216,6 +246,9 @@ export function registerRosMessageDiagnostics(
     const skippedSchemes = new Set<string>();
 
     const analyzeOne = async (document: vscode.TextDocument): Promise<void> => {
+        if (isStarted && !isStarted()) {
+            return; // P2:索引未启动(门关)不做任何分析
+        }
         if (document.languageId !== "rosmsg") {
             return;
         }
@@ -263,17 +296,45 @@ export function registerRosMessageDiagnostics(
     });
     const openListener = vscode.workspace.onDidOpenTextDocument(analyze);
     const closeListener = vscode.workspace.onDidCloseTextDocument(doc => collection.delete(doc.uri));
+    // 新建路径兜底:Explorer 新建通常随后自动打开(走 analyzeOne),这里兜"创建了但没打开"的文件——
+    // 名字判定只需要文件名,无需打开文档;目录名误配用 statSync isFile 挡掉
+    const createListener = vscode.workspace.onDidCreateFiles(event => {
+        if (isStarted && !isStarted()) {
+            return; // P2:门关零后台,与 analyzeOne 同门
+        }
+        for (const uri of event.files) {
+            if (uri.scheme !== "file") {
+                continue;
+            }
+            let isFile = true;
+            try {
+                isFile = fs.statSync(uri.fsPath).isFile();
+            } catch {
+                // 探测不到(如瞬时被删)按文件放行,后续打开路径会复判
+            }
+            if (!isFile) {
+                continue;
+            }
+            const violation = interfaceNameViolation(uri.fsPath);
+            if (violation) {
+                collection.set(uri, [violation]);
+            }
+        }
+    });
 
-    // 初始分析当前已打开文档(索引未就绪时可能产生过期警告,由 reanalyzeAll 在就绪后清除)
-    reanalyzeAll();
+    // 初始分析当前已打开文档(P2:仅索引已启动时;未启动由启动链的 reanalyzeAll 兜底)
+    if (!isStarted || isStarted()) {
+        reanalyzeAll();
+    }
 
-    log.info("ROS message diagnostics registered (missing --- / duplicate fields / unknown types / deprecated types; three-level unknown-type verdict + ready recompute)");
+    log.info("ROS message diagnostics registered (missing --- / duplicate fields / unknown types / deprecated types / invalid interface names; three-level unknown-type verdict + ready recompute)");
     return {
         disposables: [
             collection,
             changeListener,
             openListener,
             closeListener,
+            createListener,
             { dispose: () => { if (timer) { clearTimeout(timer); } } }
         ],
         reanalyzeAll

@@ -38,7 +38,7 @@ class Emitter<T> {
 function makeFetcher(): { fetcher: PackageFetcher; fire: (ev: DriverEvent) => void } {
     const em = new Emitter<DriverEvent>();
     return {
-        fetcher: { onExternalChange: (cb) => em.on(cb), setRefreshIntervalMs: () => undefined, dispose: () => undefined },
+        fetcher: { start: () => undefined, onExternalChange: (cb) => em.on(cb), setRefreshIntervalMs: () => undefined, dispose: () => undefined },
         fire: (ev) => em.fire(ev),
     };
 }

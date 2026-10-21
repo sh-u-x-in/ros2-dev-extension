@@ -15,15 +15,22 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import {
+import { installVscodeStub } from "./_vscode-stub";
+
+// 记忆模块/state-file import vscode(日志 l10n)→ 无头环境先装 stub 再 require(可单跑;宿主里桩早退不劫持)
+installVscodeStub();
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const {
     emptySelectionMemory,
     normalizeSelectionMemory,
     readAllSelectionMemory,
     readSelectionMemory,
     SELECTION_MEMORY_FIELD,
     writeSelectionMemory,
-} from "../../src/build-tool/package-service/share/selection-memory";
-import { getStateFilePath, readStateFile, updateStateFile } from "../../src/build-tool/package-service/share/state-file";
+} = require("../../src/build-tool/package-service/share/selection-memory");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getStateFilePath, readStateFile, setStateStorageRoot, updateStateFile } = require("../../src/build-tool/package-service/share/state-file");
 
 const BUILD_ID = "colcon.build";
 const RUN_ID = "ros2.run";
@@ -56,82 +63,84 @@ describe("selection-memory:归一化(纯函数)", () => {
     });
 });
 
-describe("selection-memory:读写(复用工作区状态文件)", () => {
+describe("selection-memory:读写(扩展私有存储内的状态文件)", () => {
     let root: string;
 
     beforeEach(async () => {
         root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rde-selection-memory-"));
+        setStateStorageRoot(root);
     });
 
     afterEach(async () => {
+        setStateStorageRoot(undefined);
         await fs.promises.rm(root, { recursive: true, force: true });
     });
 
     it("无状态文件 → 空记忆(不抛错)", async () => {
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), { picked: [], custom: "" });
-        assert.deepStrictEqual(await readAllSelectionMemory(root), {});
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), { picked: [], custom: "" });
+        assert.deepStrictEqual(await readAllSelectionMemory(), {});
     });
 
     it("写入后读回一致(往返;自定义输入保持完整原文)", async () => {
         const memory = { picked: [1, 0], custom: '--install-base "/tmp/a b"' };
-        await writeSelectionMemory(root, BUILD_ID, memory);
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), {
+        await writeSelectionMemory(BUILD_ID, memory);
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), {
             picked: [0, 1],                       // 写入时已归一化(升序)
             custom: '--install-base "/tmp/a b"',
         });
     });
 
     it("**按命令 id 分槽**:写另一条命令不动本条", async () => {
-        await writeSelectionMemory(root, BUILD_ID, { picked: [0], custom: "a" });
-        await writeSelectionMemory(root, RUN_ID, { picked: [2], custom: "b" });
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), { picked: [0], custom: "a" });
-        assert.deepStrictEqual(await readSelectionMemory(root, RUN_ID), { picked: [2], custom: "b" });
-        assert.deepStrictEqual(await readAllSelectionMemory(root), {
+        await writeSelectionMemory(BUILD_ID, { picked: [0], custom: "a" });
+        await writeSelectionMemory(RUN_ID, { picked: [2], custom: "b" });
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), { picked: [0], custom: "a" });
+        assert.deepStrictEqual(await readSelectionMemory(RUN_ID), { picked: [2], custom: "b" });
+        assert.deepStrictEqual(await readAllSelectionMemory(), {
             [BUILD_ID]: { picked: [0], custom: "a" },
             [RUN_ID]: { picked: [2], custom: "b" },
         });
     });
 
     it("覆盖同一条命令 = 整条替换(旧的 custom 不会残留)", async () => {
-        await writeSelectionMemory(root, BUILD_ID, { picked: [0, 1], custom: "old" });
-        await writeSelectionMemory(root, BUILD_ID, { picked: [], custom: "" });
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), { picked: [], custom: "" });
+        await writeSelectionMemory(BUILD_ID, { picked: [0, 1], custom: "old" });
+        await writeSelectionMemory(BUILD_ID, { picked: [], custom: "" });
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), { picked: [], custom: "" });
     });
 
     it("与其它写者字段共存:写记忆不动别人,别人写也不动记忆", async () => {
-        await updateStateFile(root, (draft) => { draft.sampleField = { k: 1 }; });
-        await writeSelectionMemory(root, BUILD_ID, { picked: [1], custom: "x" });
-        let state = await readStateFile(root);
+        await updateStateFile((draft) => { draft.sampleField = { k: 1 }; });
+        await writeSelectionMemory(BUILD_ID, { picked: [1], custom: "x" });
+        let state = await readStateFile();
         assert.deepStrictEqual(state.sampleField, { k: 1 });
         assert.deepStrictEqual(state[SELECTION_MEMORY_FIELD], { [BUILD_ID]: { picked: [1], custom: "x" } });
 
-        await updateStateFile(root, (draft) => { draft.otherField = "y"; });
-        state = await readStateFile(root);
+        await updateStateFile((draft) => { draft.otherField = "y"; });
+        state = await readStateFile();
         assert.strictEqual(state.otherField, "y");
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), { picked: [1], custom: "x" });
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), { picked: [1], custom: "x" });
     });
 
     it("状态文件里的槽是坏形状(字符串/数组/条目非对象)→ 按空/已归一化处理,不抛错", async () => {
-        const filePath = getStateFilePath(root);
+        const filePath = getStateFilePath();
         await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
         await fs.promises.writeFile(filePath, JSON.stringify({ selectionMemory: "not-an-object" }), "utf-8");
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), { picked: [], custom: "" });
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), { picked: [], custom: "" });
 
         await fs.promises.writeFile(
             filePath,
             JSON.stringify({ selectionMemory: { [BUILD_ID]: { picked: [3, "x", -1], custom: 7 }, [RUN_ID]: "bad" } }),
             "utf-8",
         );
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), { picked: [3], custom: "" });
-        assert.deepStrictEqual(await readSelectionMemory(root, RUN_ID), { picked: [], custom: "" });
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), { picked: [3], custom: "" });
+        assert.deepStrictEqual(await readSelectionMemory(RUN_ID), { picked: [], custom: "" });
     });
 
     it("并发写两条命令 → 两条都在(单写者队列不丢字段)", async () => {
         await Promise.all([
-            writeSelectionMemory(root, BUILD_ID, { picked: [0], custom: "a" }),
-            writeSelectionMemory(root, RUN_ID, { picked: [1], custom: "b" }),
+            writeSelectionMemory(BUILD_ID, { picked: [0], custom: "a" }),
+            writeSelectionMemory(RUN_ID, { picked: [1], custom: "b" }),
         ]);
-        assert.deepStrictEqual(await readSelectionMemory(root, BUILD_ID), { picked: [0], custom: "a" });
-        assert.deepStrictEqual(await readSelectionMemory(root, RUN_ID), { picked: [1], custom: "b" });
+        assert.deepStrictEqual(await readSelectionMemory(BUILD_ID), { picked: [0], custom: "a" });
+        assert.deepStrictEqual(await readSelectionMemory(RUN_ID), { picked: [1], custom: "b" });
     });
 });

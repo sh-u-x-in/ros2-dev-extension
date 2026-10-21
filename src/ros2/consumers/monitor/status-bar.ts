@@ -15,16 +15,16 @@ import { getLogger } from "../../../logger";
 const log = getLogger("status-bar");
 
 /**
- * PATH 中定位 ros2 可执行文件(启动链路静态诊断;跨平台覆盖无扩展名/.exe/.cmd/.bat)。
- * 扩展执行 ros2 命令用的是 source 后的 env(非 process.env),PATH 取自该 env。
+ * PATH 中定位可执行文件(P4:诊断对象改为助手真实依赖;跨平台覆盖无扩展名/.exe/.cmd/.bat)。
+ * 扩展执行用的是 source 后的 env(非 process.env),PATH 取自该 env。
  */
-function resolveRos2InPath(envPath: string | undefined): string | null {
+function resolveExecutableInPath(envPath: string | undefined, names: string[]): string | null {
     if (!envPath) {
         return null;
     }
     const dirs = envPath.split(/[;:]/).map((s) => s.trim()).filter((s) => s.length > 0);
     for (const dir of dirs) {
-        for (const name of ["ros2", "ros2.exe", "ros2.cmd", "ros2.bat"]) {
+        for (const name of names) {
             try {
                 const full = path.join(dir, name);
                 if (fs.existsSync(full)) {
@@ -93,9 +93,9 @@ export class StatusBarItem {
     }
 
     /**
-     * 启动链路静态诊断(每会话一次,激活时;纯 env 读取,与 daemon 探测无关)。
-     * 检查扩展执行 env 里 ros2 是否可用:若 PATH 无 ros2,点「启动守护进程」的 exec spawn
-     * 必然失败,UI 表现为"点了没反应、仍一直不在线"。
+     * 启动链路静态诊断(每会话一次,激活时;纯 env 读取)。
+     * P4:诊断对象 = **常驻助手真实依赖**——python3 可执行、ROS_DISTRO/AMENT_PREFIX_PATH;
+     * 旧口径(ros2 CLI + daemon 端口 11511)是 daemon 时代的错位——助手是 python3 + rclpy,不经 ros2 CLI。
      */
     private logEnvDiagOnce() {
         if (this.envDiagDone) {
@@ -104,15 +104,13 @@ export class StatusBarItem {
         this.envDiagDone = true;
         try {
             const envDiag = composeApi.environment.getEnv();
-            const ros2Exe = resolveRos2InPath(envDiag?.PATH);
-            const rosVer = envDiag?.ROS_VERSION ? String(envDiag.ROS_VERSION) : "(无)";
-            const rosDistro = envDiag?.ROS_DISTRO ? String(envDiag.ROS_DISTRO) : "(无)";
-            const domainRaw = envDiag?.ROS_DOMAIN_ID;
-            const domain = domainRaw !== undefined && domainRaw !== "" ? String(domainRaw) : "0";
-            if (ros2Exe) {
-                log.info(vscode.l10n.t("Launch-chain env diagnostics: ROS_VERSION={0}, ROS_DISTRO={1}, ROS_DOMAIN_ID={2}; PATH resolved ros2 -> {3} (probe port=11511+{4})", rosVer, rosDistro, domain, ros2Exe, domain));
+            const python3 = resolveExecutableInPath(envDiag?.PATH, ["python3", "python3.exe", "python"]);
+            const rosDistro = envDiag?.ROS_DISTRO ? String(envDiag.ROS_DISTRO) : vscode.l10n.t("(none)");
+            const ament = envDiag?.AMENT_PREFIX_PATH ? vscode.l10n.t("(set)") : vscode.l10n.t("(unset)");
+            if (python3) {
+                log.info(vscode.l10n.t("Helper-chain env diagnostics: ROS_DISTRO={0}, AMENT_PREFIX_PATH={1}; PATH resolved python3 -> {2}", rosDistro, ament, python3));
             } else {
-                log.warn(vscode.l10n.t("Launch-chain env diagnostics: ROS_VERSION={0}, ROS_DISTRO={1}, ROS_DOMAIN_ID={2}; ros2 not found on PATH -> clicking \"Start Helper\" will fail (ros2 command not found); activate/source the ROS environment first, or investigate the activation chain", rosVer, rosDistro, domain));
+                log.warn(vscode.l10n.t("Helper-chain env diagnostics: ROS_DISTRO={0}, AMENT_PREFIX_PATH={1}; python3 not found on PATH -> clicking \"Start Helper\" will fail (python3 is required to run the resident helper); activate/source the ROS environment first", rosDistro, ament));
             }
         } catch (error) {
             log.debug(vscode.l10n.t("Launch-chain env diagnostics failed: {0}", error instanceof Error ? error.message : String(error)));

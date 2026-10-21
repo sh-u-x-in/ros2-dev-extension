@@ -32,7 +32,7 @@ export interface ColconBuildOptions {
     base_path: string;
     /**
      * **预展开的整条命令行(含命令名)**:扩展发起的构建一律由 `build/share-spec.ts` 按设置里的模板
-     * (`ROS2.build.shareSpec`)展开后传入;`colcon_build` 只执行 —— `argv[0]` 即命令名,其余为参数
+     * (`ROS2.build.template` + `ROS2.build.presets`)展开后传入;`colcon_build` 只执行 —— `argv[0]` 即命令名,其余为参数
      * ⇒ 命令内容 100% 由模板决定(本层不认识模板、预设、记忆,也不做任何命令拼装)。
      */
     argv: string[];

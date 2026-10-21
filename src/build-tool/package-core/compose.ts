@@ -18,6 +18,7 @@ import { createColconListExecutor } from "./scan/colcon-list";
 import { getSharedPackageCache, PackageCache } from "./data/package-cache";
 import { isDirScanExcluded } from "./scan/package-scan";
 import { resolveExcludeFolders } from "../walk";
+import { getWalkTimeoutConfig } from "../walk/base/walk-config";
 import { isValidPackageXml } from "./scan/package-xml";
 import { composeApi } from "../../ros2/api";
 
@@ -109,6 +110,12 @@ export interface PackageCoreOptions {
 export interface PackageCore {
     /** 门面(唯一入口) */
     ui: PackageFacadeApi;
+    /**
+     * 显式启动(P2 组件 start 化):驱动层通电(timer/fs 监听)+ 数据层首载。
+     * 构造零副作用;编排层按环境门调用(门关不启动;重复调用幂等)。
+     * 顺序=先 fetcher(事件通道就位)再 data(首扫),避免首扫期间漏驱动事件。
+     */
+    start(): void;
     getState(): Readonly<PackageDataState>;
     onDidChange(cb: (ev: PackageChangeEvent) => void): () => void;
     forceRefresh(): Promise<void>;
@@ -199,7 +206,8 @@ function applyScanConfig(
     const excludedFolders = config?.buildExcludeFolders ?? [];
     // 经 ros2/ 执行口注入 colcon list 执行器(scan/colcon-list,2026-08-29 归位);闭包捕获本次的排除集
     cache.setColconListExecutor(() => colconList(workspaceRoot, excludedFolders));
-    const walkTimeouts = config?.walkTimeouts ?? { totalTimeoutMs: 0, branchTimeoutMs: 0, maxDepth: 0 };
+    // 2026-10-18 装配防御:缺省回落内置 package profile(原 {0,0,0} 会使 walk 立即超时并绕过内置默认)
+    const walkTimeouts = config?.walkTimeouts ?? getWalkTimeoutConfig("package");
     cache.updateConfig({
         excludedFolders,
         followSymlinks: config?.followSymlinks ?? false,
@@ -265,6 +273,11 @@ export function createPackageCore(options: PackageCoreOptions = {}): PackageCore
 
     const core: PackageCore = {
         ui,
+        // P2 start 化:先事件通道后首扫(都幂等)
+        start: () => {
+            fetcher.start();
+            data.start();
+        },
         getState: () => ui.getState(),
         onDidChange: (cb) => ui.onDidChange(cb),
         forceRefresh: () => ui.forceRefresh(),

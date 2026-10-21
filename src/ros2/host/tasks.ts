@@ -14,6 +14,14 @@ export interface RunShellTaskOptions {
     cwd?: string;
     isBackground?: boolean;
     problemMatchers?: string[];
+    /**
+     * 原生运行策略(2026-10-17 真多实例·终版):公开 d.ts 的 `RunOptions` 只含 `reevaluateOnRerun`;
+     * `instancePolicy`("silent" = 同任务已有实例在跑时**不弹窗、不终止,静默放行新实例**;缺省 "prompt"
+     * 会弹"选择要终止的实例")与 `instanceLimit`(单任务并发实例上限,**默认 1**)是 workbench 内部
+     * 读取的字段(1.133 源码 `_handleInstancePolicy` / run 限额判定实证),经 extHost runOptions
+     * **原样透传**生效,故类型侧 cast。colcon_build/doctor/rosdep 不传零影响。
+     */
+    taskRunOptions?: { reevaluateOnRerun?: boolean; instancePolicy?: string; instanceLimit?: number };
 }
 
 /**
@@ -41,6 +49,9 @@ export async function runShellTask(
         env: options?.env,
         cwd: options?.cwd,
     });
+    if (options?.taskRunOptions) {
+        task.runOptions = options.taskRunOptions as vscode.RunOptions;
+    }
     if (options?.isBackground) {
         task.isBackground = true;
     }

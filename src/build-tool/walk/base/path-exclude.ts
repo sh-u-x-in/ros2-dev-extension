@@ -55,3 +55,18 @@ export function isPathExcluded(target: string, excludedFolders: string[]): boole
     }
     return false;
 }
+
+/**
+ * 解析用户排除列表 + **win32 大小写折叠**(2026-10-18 后剪枝批新增)。
+ * 与 `isPathExcludedNormalized` 配套使用:Windows 文件系统大小写不敏感,解析侧先折叠,
+ * 比对侧免得消费方各自再折(镜像 test-provider 的私有先例,收编为公共出口)。
+ */
+export function resolveExcludeFoldersNormalized(workspaceFolder: string, configured: string[]): string[] {
+    const resolved = resolveExcludeFolders(workspaceFolder, configured);
+    return process.platform === "win32" ? resolved.map((p) => p.toLowerCase()) : resolved;
+}
+
+/** 判断路径是否命中排除目录(**配套** `resolveExcludeFoldersNormalized`;win32 双侧折叠) */
+export function isPathExcludedNormalized(target: string, excludedNormalized: string[]): boolean {
+    return isPathExcluded(process.platform === "win32" ? target.toLowerCase() : target, excludedNormalized);
+}

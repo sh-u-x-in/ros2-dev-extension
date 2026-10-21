@@ -12,6 +12,7 @@
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -20,10 +21,32 @@ import time
 
 SOCK = "/tmp/rde_param_helper.sock"
 LOCK = "/tmp/rde_param_helper.lock"
-HELPER = os.path.expanduser("~/rde-ros-2/assets/ros/param_helper.py")
+# 仓库根=脚本位置上溯三级(test/vm/helper/ → 仓库根);不依赖 cwd/家目录假设
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+HELPER = os.path.join(REPO, "assets", "ros", "param_helper.py")
+NODES_DIR = os.path.join(REPO, "test", "vm", "helper", "nodes")
 ENV = dict(os.environ)
+# DDS 域偏移(2026-10-19 用户裁定):测试全家桶(助手/夹具节点/ros2 CLI)固定在独立域,
+# 与用户活着的环境「不接壤」——夹具节点出入图不与用户节点互相干扰。可用 RDE_TEST_DOMAIN 覆盖。
+ENV.setdefault("ROS_DOMAIN_ID", os.environ.get("RDE_TEST_DOMAIN", "99"))
+# 回写进程环境:VClient 的 hello 指纹读 os.environ——不同步就会客户端报域 0、
+# 服务端域 99,指纹不匹配被自己人 deny(resync 无应答假死)
+os.environ["ROS_DOMAIN_ID"] = ENV["ROS_DOMAIN_ID"]
 
 # ---------------------------------------------------------------- 工具
+
+
+def _wait_proc_gone(pattern, timeout=5.0):
+    """轮询等匹配进程消失(真死才算);超时 SIGKILL 兜底再等一拍。
+    SHM 卫生的前置(2026-10-20 教训):在 daemon 活着时清段=删它脚下的传输段,
+    进程不死但聋透,一切 CLI 图查询秒回空图——X2/X3 假红根源。"""
+    end = time.time() + timeout
+    while time.time() < end:
+        if subprocess.run(["pgrep", "-f", pattern], capture_output=True).returncode != 0:
+            return
+        time.sleep(0.2)
+    subprocess.run(["pkill", "-9", "-f", pattern], capture_output=True)
+    time.sleep(0.5)
 
 
 def clean_slate():
@@ -33,28 +56,84 @@ def clean_slate():
         except OSError:
             pass
     subprocess.run(["pkill", "-f", "param_helpe[r].py"], capture_output=True)
-    subprocess.run(["pkill", "-f", "lifecycle_talke[r]"], capture_output=True)
+    subprocess.run(["pkill", "-f", "lc_talke[r]"], capture_output=True)
+    subprocess.run(["pkill", "-f", "rde_talke[r]"], capture_output=True)
     subprocess.run(["pkill", "-f", "demo_nodes_cp[p]"], capture_output=True)
-    time.sleep(0.5)
+    # ros2 daemon 复位(2026-10-19;2026-10-20 修模式):humble 的 daemon cmdline 是
+    # "--name ros2-daemon"(连字符)——旧模式 _ros2_[d]aemon(下划线)从未命中过,
+    # daemon 从未被复位过;双模式并杀兼容新旧版本命名
+    for pat in ("ros2-dae[m]on", "_ros2_[d]aemon"):
+        subprocess.run(["pkill", "-f", pat], capture_output=True)
+    _wait_proc_gone("ros2-dae[m]on")
+    _wait_proc_gone("_ros2_[d]aemon", timeout=3.0)
+    # SHM 卫生(2026-10-19):被 SIGSTOP/强杀的参与者在 Fast-DDS 共享内存留尸,
+    # 污染域内后续参与者的发现/事件路径——daemon 已确认真死(或本就不在),此刻清段安全
+    import glob
+    for seg in glob.glob("/dev/shm/fastrtps_*") + glob.glob("/dev/shm/fast_datasharing*"):
+        try:
+            os.unlink(seg)
+        except OSError:
+            pass
+    # daemon 预热:拉起本测试域的新 daemon 并等发现收敛(避免首条 CLI「Node not found」秒败)
+    subprocess.run(["ros2", "node", "list"], capture_output=True, timeout=25, env=ENV)
+    time.sleep(2.5)
 
 
-def spawn_helper():
-    return subprocess.Popen(["python3", HELPER],
+def spawn_helper(extra=None):
+    # env=ENV 必传(2026-10-19 教训):助手必须与夹具节点同 DDS 域——漏传=助手域 0、
+    # 夹具域 99,互相不可见,所有依赖图推送的场景全灭
+    # extra:附加 argv(版本治理场景经 --ext-version 伪造「旧版本助手」)
+    args = ["python3", HELPER] + (extra or [])
+    return subprocess.Popen(args,
                             stdout=open("/tmp/vtc_out.log", "ab"),
-                            stderr=open("/tmp/vtc_err.log", "ab"))
+                            stderr=open("/tmp/vtc_err.log", "ab"), env=ENV)
 
 
-def start_node(pkg, exe):
-    return subprocess.Popen(["ros2", "run", pkg, exe],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=ENV)
+def start_fixture(script_name, extra_env=None):
+    """起仓内测试节点(test/vm/helper/nodes/ 独立脚本,python3 直跑零 colcon)。
+    与用户工作空间零耦合:不 import 任何工作区/demo 包,节点名与旧 demo 夹具对齐
+    (/talker、/listener、/lc_talker),场景断言零改动。
+    extra_env:破坏性夹具的注入参数(如 rde_lc_talker 的 RDE_TEST_HANG_SEC)。"""
+    env = dict(ENV)
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.Popen(["python3", os.path.join(NODES_DIR, script_name)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
 
 
 def ros2(*args, timeout=20):
     return subprocess.run(["ros2", *args], capture_output=True, text=True, env=ENV, timeout=timeout)
 
 
+def ros2_checked(*args, timeout=20):
+    """承重 CLI(2026-10-20 教训):rc!=0 即抛 RuntimeError 带 stderr 尾。
+    daemon 聋掉时 CLI 会「Node not found」秒败——不查 rc 的场景会假过(负向断言空洞成立:
+    C5/B11/G1-step3)或假错(B5/B10/C2/C6/D7 把 CLI 失败呈报成推送未达)。清理用裸 ros2。"""
+    st = ros2(*args, timeout=timeout)
+    if st.returncode != 0:
+        raise RuntimeError(f"CLI rc={st.returncode}: {(st.stderr or st.stdout or '').strip()[:100]}")
+    return st
+
+
 def helper_alive():
     return subprocess.run(["pgrep", "-f", "param_helpe[r].py"], capture_output=True).returncode == 0
+
+
+FIXTURE_PATTERNS = ("rde_lc_talke[r]", "rde_talke[r]", "rde_listene[r]", "rde_multi_para[m]",
+                    "rde_multi_servic[e]", "rde_action_serve[r]", "rde_frozen_nod[e]",
+                    "param_helpe[r].py")
+
+
+def kill_all_fixtures():
+    """全量收尾(2026-10-19 用户裁定:执行完必须无残留):杀光本套件域内全部夹具与助手,
+    并清 socket/锁文件。上下场景互不影响的第一道保险。"""
+    for pat in FIXTURE_PATTERNS:
+        subprocess.run(["pkill", "-f", pat], capture_output=True)
+    for p in (SOCK, LOCK):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------- 虚拟客户端
@@ -100,7 +179,17 @@ class VClient:
         self._ping_id = 100000     # ping 走独立号段:回应无 pending 匹配=孤儿,静默丢弃
         self._closed = False
         threading.Thread(target=self._reader, daemon=True).start()
-        # 连接即注册,无首帧约束;resync 首发拿快照(回应到达=在线)
+        # P4 握手:首帧 hello 环境指纹(服务端不匹配回 deny 并断开)——通过后 resync 照旧
+        hello_env = {}
+        for _k in ("ROS_VERSION", "ROS_DISTRO", "ROS_DOMAIN_ID", "RMW_IMPLEMENTATION"):
+            _v = os.environ.get(_k)
+            hello_env[_k.lower()] = str(_v) if _v not in (None, "") else "0"
+        with self._req_lock:
+            hello_id = self._next_id
+            self._next_id += 1
+        self._send({"client": self.tag, "id": hello_id, "time": self.client_time,
+                    "hello": {"proto": "rde-helper/1", "env": hello_env}})
+        # resync 首发拿快照(回应到达=在线)
         self.snapshot, _ = self.request("resync", 15)
         self.online = self.snapshot is not None and self.snapshot.get("success") is True
         if not self.online:
@@ -347,6 +436,32 @@ def lc_state(pid):
         return None
 
 
+def ensure_lc_node(timeout=25.0):
+    """D3 前置自愈(flake 实证 2026-10-19):C6 捕获的 lc_pid 偶发指向随后死掉的进程,
+    全量跑到 D3 时 /proc 已消失 → SIGSTOP 空枪。冻结前先验活,死了现拉一个新
+    lifecycle 节点并刷新 pid。返回 True=节点可用。"""
+    if CTX["lc_pid"] and lc_state(CTX["lc_pid"]) is not None:
+        return True
+    subprocess.run(["pkill", "-f", "rde_lc_talke[r]"], capture_output=True)
+    time.sleep(0.5)
+    CTX["demos"]["lc"] = start_fixture("rde_lc_talker.py")
+    end = time.time() + timeout
+    pid = ""
+    while time.time() < end and not pid:
+        out = subprocess.run(["pgrep", "-f", "rde_lc_talke[r]"],
+                             capture_output=True, text=True)
+        cands = [p for p in out.stdout.strip().split("\n") if p and lc_state(p) not in (None, "Z")]
+        if cands:
+            pid = cands[-1]   # 取最高 pid=最新实例
+        else:
+            time.sleep(0.3)
+    if not pid:
+        return False
+    CTX["lc_pid"] = pid
+    time.sleep(2.0)   # 等服务端图事件与参数服务就绪
+    return True
+
+
 def wait_lc_state(pid, want, timeout=3.0):
     """等待进程进入期望状态(冻结/解冻确定性守卫:SIGSTOP/SIGCONT 空枪在这里响亮失败)"""
     end = time.time() + timeout
@@ -360,7 +475,7 @@ def wait_lc_state(pid, want, timeout=3.0):
 # ---------------------------------------------------------------- 场景
 
 def sc_a1():
-    """连接即注册:resync 首发,回应=全量快照;信封三字段齐;锁文件三字段(pid/epoch/ticks)"""
+    """连接即注册:resync 首发,回应=全量快照;信封三字段齐;锁文件四字段(pid/epoch/ticks/版本)"""
     c = main_client()
     try:
         lock_fields = open(LOCK, encoding="utf-8").read().split()
@@ -371,7 +486,8 @@ def sc_a1():
           and isinstance(env.get("service"), int) and env["service"] > 0
           and isinstance(env.get("time"), (int, float)) and env["time"] > 0
           and isinstance(env.get("cl-num"), int) and env["cl-num"] >= 1
-          and len(lock_fields) == 3 and int(lock_fields[0]) == c.service_pid)
+          and len(lock_fields) == 4 and int(lock_fields[0]) == c.service_pid
+          and lock_fields[3] == "0")   # 套件 spawn 不带 --ext-version → 占位 "0"
     return ok, (f"pid={env.get('service')} 启动时刻={env.get('time')} cl={env.get('cl-num')} "
                 f"锁文件={lock_fields}")
 
@@ -465,7 +581,10 @@ def sc_b5():
         return False, f"前置订阅失败:{(r or {}).get('error', '')[:60]}"
     a.pushes.clear()
     b.pushes.clear()
-    ros2("param", "set", "/talker", "use_sim_time", "false")
+    try:
+        ros2_checked("param", "set", "/talker", "use_sim_time", "false")
+    except RuntimeError as e:
+        return False, f"CLI 改参失败:{e}"
     pa = a.wait_push("param", timeout=8,
                      pred=lambda fr: "use_sim_time" in ((fr.get("values") or {}).get("/talker") or {}))
     time.sleep(2.5)   # 给未订阅连接留出"如果会推也该到了"的窗口
@@ -524,12 +643,15 @@ def sc_b9():
 
 
 def sc_c1():
-    """图一变推全量(无增量):起 listener,graph push 带 /listener,无 added_* 键"""
+    """图一变推全量(无增量):起 listener,graph push 带 /listener,无 added_* 键。
+    自清理(2026-10-19 教训):残留的同名节点会让图名集无变化=永远无 push(C1 假死根因)"""
+    subprocess.run(["pkill", "-f", "rde_listene[r]"], capture_output=True)
     c = main_client()
     c.pushes.clear()
-    CTX["demos"]["listener"] = start_node("demo_nodes_cpp", "listener")
+    CTX["demos"]["listener"] = start_fixture("rde_listener.py")
     fr = c.wait_push("graph", timeout=15,
                      pred=lambda f: "/listener" in (f.get("nodes") or []))
+    subprocess.run(["pkill", "-f", "rde_listene[r]"], capture_output=True)
     if fr is None:
         return False, "15s 未收到含 /listener 的 graph push"
     incremental = any(k.startswith("added_") or k.startswith("removed_") for k in fr)
@@ -539,7 +661,10 @@ def sc_c1():
 
 def sc_c2():
     """转换权威 lifecycle push:configure 后收到 state=inactive 的整包(边无 id)"""
-    ros2("lifecycle", "set", "/lc_talker", "configure")
+    try:
+        ros2_checked("lifecycle", "set", "/lc_talker", "configure")
+    except RuntimeError as e:
+        return False, f"CLI 转换失败:{e}"
     fr = main_client().wait_push("lifecycle", timeout=12,
                                  pred=lambda f: f.get("node") == "/lc_talker"
                                  and f.get("state") == "inactive")
@@ -569,10 +694,24 @@ def sc_d1():
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(2.0)
     s.connect(SOCK)
-    # 只发一帧 ping 证明活过,随后停发——10s 无任何帧=半死踢除
+    # P4:首帧必须是 hello——缺失=首帧违规 deny 即踢(0ms 假踢,2026-10-19 修)
+    hello_env = {}
+    for _k in ("ROS_VERSION", "ROS_DISTRO", "ROS_DOMAIN_ID", "RMW_IMPLEMENTATION"):
+        _v = os.environ.get(_k)
+        hello_env[_k.lower()] = str(_v) if _v not in (None, "") else "0"
     s.sendall(json.dumps({"client": "halfdead", "id": 1, "time": int(time.time() * 1000),
-                          "request": {"op": "ping"}}).encode() + b"\n")
+                          "hello": {"proto": "rde-helper/1", "env": hello_env}}).encode() + b"\n")
     buf = s.makefile("r", encoding="utf-8")
+    # hello 通过即静默;读到其他帧(push/心跳广播)属正常——只有 deny 才是握手被拒
+    try:
+        early = buf.readline()
+        if early and '"deny"' in early:
+            return False, f"握手被拒:{early.strip()[:120]}"
+    except socket.timeout:
+        pass
+    # 已验证后发一帧 ping 证明活过,随后停发——10s 无任何帧=半死踢除
+    s.sendall(json.dumps({"client": "halfdead", "id": 2, "time": int(time.time() * 1000),
+                          "request": {"op": "ping"}}).encode() + b"\n")
     buf.readline()   # ping 回应
     t0 = time.time()
     kicked = False
@@ -596,6 +735,8 @@ def sc_d3a():
     """卡死窗口内隔离(用户裁定核心,串行契约):坏请求烧 1 个 worker(~10s),
     同节点第二发被串行闸门立即拒绝(不排队),好请求(本连接+异客户端)全程毫秒级,
     坏请求超时后熔断开启,再来的同节点请求快失败"""
+    if not ensure_lc_node():
+        return False, "lc 节点无法拉起(前置失败)"
     lc_sigstop()
     if not wait_lc_state(CTX["lc_pid"], "T"):
         lc_sigcont()
@@ -613,7 +754,7 @@ def sc_d3a():
     # ① 同连接好请求(表单内省,不碰节点)
     r1, ms1 = main_c.request("get_form", 15, types=["example_interfaces/srv/AddTwoInts"])
     # ② 异客户端:同节点第二发 → 串行闸门立即拒绝
-    b = get_client("winB") or new_client("winB")
+    b = get_client("winB") or new_client("winB") or new_client("winB")
     r2, ms2 = b.request("get_param_values", 15, node="/lc_talker", names=["use_sim_time"])
     # ③ 异客户端好请求(resync 读缓存)
     r3, ms3 = b.request("resync", 15)
@@ -640,7 +781,7 @@ def sc_d3b():
     c = main_client()
     r, ms = c.request("get_param_values", 5, node="/lc_talker", names=["use_sim_time"])
     fast1 = r is not None and not r.get("success") and ms < 1000
-    b = get_client("winB")
+    b = get_client("winB") or new_client("winB")
     r2, ms2 = b.request("get_param_values", 5, node="/lc_talker", names=["use_sim_time"])
     shared = r2 is not None and not r2.get("success") and ms2 < 1000
     r3, ms3 = b.request("get_form", 15, types=["example_interfaces/srv/AddTwoInts"])
@@ -661,7 +802,9 @@ def sc_d3b():
 def sc_d3c():
     """串行契约:6 并发同节点 → 第 1 发烧满 10s,其余 5 发被串行闸门秒拒,好请求毫秒级。
     前置:D3b 留下的熔断可能仍在冷却——先解冻+成功请求一次(摘熔断),再重新 SIGSTOP。"""
-    lc_sigcont()
+    lc_sigcont()   # 防上一幕遗留冻结(节点存活时解冻;已死由 ensure 现拉)
+    if not ensure_lc_node():
+        return False, "lc 节点无法拉起(前置失败)"
     if not wait_lc_state(CTX["lc_pid"], "S", timeout=3.0):
         return False, f"SIGCONT 未生效(pid={CTX['lc_pid']} state={lc_state(CTX['lc_pid'])})"
     end = time.time() + 40
@@ -751,6 +894,416 @@ def sc_d6():
     return 8.0 <= secs <= 24.0, f"全部断开后 {secs:.1f}s 自退(宽限≈10s,非立即)"
 
 
+def sc_d8():
+    """stderr 断管自退(2026-10-19 僵尸助手钳):扩展宿主重载/关闭会掐断助手 stderr
+    读端,旧代码此后任何 warn 级写入抛 BrokenPipeError 无声杀死 housekeeping 线程——
+    宽限自退走到一半死掉=僵尸助手(请求应答正常、心跳/自退/踢除全灭,用户侧
+    「状态」永远灰)。钳:stderr 读端在宽限窗口中途掐断,自退必须照常完成。"""
+    subprocess.run(["pkill", "-f", "param_helpe[r].py"], capture_output=True)
+    time.sleep(0.5)
+    try:
+        os.unlink(SOCK)
+    except OSError:
+        pass
+    proc = subprocess.Popen(["python3", HELPER],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=ENV)
+    end = time.time() + 10
+    while time.time() < end and not os.path.exists(SOCK):
+        time.sleep(0.2)
+    if not os.path.exists(SOCK):
+        proc.kill()
+        return False, "专用助手未能起 Socket(前置失败)"
+    c = new_client("d8")
+    c.close()              # 断开 → 零客户端宽限 10s 起跑
+    time.sleep(2)          # 宽限窗口中途掐断 stderr 读端(模拟扩展宿主死亡)
+    try:
+        proc.stderr.close()
+    except Exception:
+        pass
+    end = time.time() + 25
+    while time.time() < end and proc.poll() is None:
+        time.sleep(0.5)
+    exited = proc.poll() is not None
+    return exited, ("stderr 断管后宽限自退完成(防僵尸钳生效)" if exited
+                    else "stderr 断管后 25s 未自退=僵尸(回归!)")
+
+
+# ---- X 复合并发(2026-10-19 用户裁定):A 固定观察 B + 堵转 + 负载精确 + 域隔离 ----
+
+
+def ensure_helper():
+    """X 系前置:助手不在(D8 收尾自退)就拉一个"""
+    if not helper_alive():
+        spawn_helper()
+        time.sleep(1.0)
+
+
+def sc_x1():
+    """X1 堵转下新接入(A 固定=冻结节点且在途烧灼;B=新客户端接入/新节点入图,必须及时且不传染)"""
+    ensure_helper()
+    CTX["demos"]["frozen"] = start_fixture("rde_frozen_node.py", {"RDE_FREEZE_AFTER": "0.5"})
+    fr = main_client().wait_push("graph", timeout=15,
+                                 pred=lambda f: "/frozen_node" in (f.get("nodes") or []))
+    if fr is None:
+        subprocess.run(["pkill", "-f", "rde_frozen_nod[e]"], capture_output=True)
+        return False, "冻结节点未入图(前置失败)"
+    time.sleep(1.5)   # 冻结定时器触发,参数服务停摆
+    burn = {}
+
+    def fire():
+        burn["r"], burn["ms"] = main_client().request(
+            "get_param_values", 30, node="/frozen_node", names=["alive"])
+
+    th = threading.Thread(target=fire)
+    th.start()
+    time.sleep(0.5)   # 烧灼占住该节点单飞闸门(堵转成立)
+    t0 = time.time()
+    b = new_client("x1b")
+    r, ms = b.request("resync", 5)
+    join_ms = (time.time() - t0) * 1000
+    join_ok = r is not None and r.get("success") and join_ms < 3000
+    main_client().pushes.clear()
+    t1 = time.time()
+    CTX["demos"]["listener"] = start_fixture("rde_listener.py")
+    fr2 = main_client().wait_push("graph", timeout=6,
+                                  pred=lambda f: "/listener" in (f.get("nodes") or []))
+    node_ms = (time.time() - t1) * 1000
+    node_ok = fr2 is not None and node_ms < 6000
+    th.join(35)
+    burn_r = burn.get("r")
+    # 有感契约:冻结节点的请求必须「显式失败」(串行拒/服务未发现/超时都算——
+    # 冻结节点的图推送任务自己也会挂住闸门,1ms 串行拒正是堵转实验要的形态)
+    burn_ok = burn_r is not None and not burn_r.get("success")
+    drop_client("x1b")
+    subprocess.run(["pkill", "-f", "rde_frozen_nod[e]"], capture_output=True)
+    subprocess.run(["pkill", "-f", "rde_listene[r]"], capture_output=True)
+    ok = join_ok and node_ok and burn_ok
+    return ok, (f"堵转中新客户端接入 {ms:.0f}ms(<3s)/新节点入图推送 {node_ms:.0f}ms(<6s);"
+                f"烧灼 {burn['ms']:.0f}ms 失败有感(不静默)")
+
+
+def sc_x2():
+    """X2 堵转下数据流正确性:冻结节点烧灼在途,talker 改参 → 订阅者收到的值必须正确且及时"""
+    ensure_helper()
+    CTX["demos"]["frozen"] = start_fixture("rde_frozen_node.py", {"RDE_FREEZE_AFTER": "0.5"})
+    fr = main_client().wait_push("graph", timeout=15,
+                                 pred=lambda f: "/frozen_node" in (f.get("nodes") or []))
+    if fr is None:
+        subprocess.run(["pkill", "-f", "rde_frozen_nod[e]"], capture_output=True)
+        return False, "冻结节点未入图(前置失败)"
+    time.sleep(1.5)
+    burn = {}
+
+    def fire():
+        burn["r"], burn["ms"] = main_client().request(
+            "get_param_values", 30, node="/frozen_node", names=["alive"])
+
+    th = threading.Thread(target=fire)
+    th.start()
+    time.sleep(0.5)
+    b = new_client("x2b")
+    r0 = request_ok(b, "get_param_values", node="/talker", names=["use_sim_time"])
+    if not (r0 and r0.get("success")):
+        th.join(35)
+        subprocess.run(["pkill", "-f", "rde_frozen_nod[e]"], capture_output=True)
+        drop_client("x2b")
+        return False, "订阅前置失败"
+    b.pushes.clear()
+    # CLI 在拥塞/冷启动下可能「Node not found」秒败(发现未收敛)——重试+间隔拉长,至推送到达;
+    # rc 逐次留痕(2026-10-20 教训:CLI 全败=零事件零推送,detail 必须交代 CLI 层,不许谎报推送迟到)
+    t0 = time.time()
+    fr = None
+    cli_fail = ""
+    for attempt in range(4):
+        st = ros2("param", "set", "/talker", "use_sim_time", "true")
+        if st.returncode != 0:
+            cli_fail = f"CLI 败(第{attempt + 1}次) rc={st.returncode}: {(st.stderr or '').strip()[:60]}"
+        fr = b.wait_push("param", timeout=10,
+                         pred=lambda f: (f.get("values") or {}).get("/talker", {})
+                         .get("use_sim_time") is True)
+        if fr is not None:
+            break
+        time.sleep(3)   # 拉长间隔:等 daemon/发现收敛(用户裁定:单测放宽,结果随负载抖动)
+    push_ms = (time.time() - t0) * 1000
+    th.join(35)
+    burn_r = burn.get("r")
+    burn_ok = burn_r is not None and not burn_r.get("success")
+    ros2("param", "set", "/talker", "use_sim_time", "false")
+    subprocess.run(["pkill", "-f", "rde_frozen_nod[e]"], capture_output=True)
+    drop_client("x2b")
+    got = ((fr or {}).get("values") or {}).get("/talker", {}).get("use_sim_time")
+    ok = fr is not None and push_ms < 40000 and burn_ok
+    return ok, (f"堵转中改参推送 {push_ms:.0f}ms(<40s,含重试)实测值={got!r}"
+                + (f";{cli_fail}" if cli_fail else "")
+                + f";冻结节点烧灼 {burn.get('ms', -1):.0f}ms 失败有感(不静默)")
+
+
+def sc_x3():
+    """X3 生命周期并发:转换链 configure→activate→deactivate(回退/退出)与并发 resync 风暴
+    交错——状态推送序必须正确、resync 全成功及时(并发不破坏语义)"""
+    ensure_helper()
+    subprocess.run(["pkill", "-f", "rde_lc_talke[r]"], capture_output=True)
+    CTX["demos"]["lc"] = start_fixture("rde_lc_talker.py")
+    fr = main_client().wait_push("graph", timeout=25,
+                                 pred=lambda f: "/lc_talker" in (f.get("nodes") or []))
+    if fr is None:
+        return False, "lc 未回图(前置失败)"
+    time.sleep(1.0)
+    c = main_client()
+    b = new_client("x3b")
+    c.pushes.clear()
+    out = {"n": 0, "ok": 0}
+
+    def resync_storm():
+        for _ in range(3):
+            r, _ = b.request("resync", 10)
+            out["n"] += 1
+            if r is not None and r.get("success"):
+                out["ok"] += 1
+            time.sleep(0.8)
+
+    th = threading.Thread(target=resync_storm)
+    th.start()
+    seq_ok = True
+    detail = []
+    for transition, want in (("configure", "inactive"),
+                             ("activate", "active"),
+                             ("deactivate", "inactive")):
+        # CLI「Node not found」秒败重试(发现未收敛随负载抖动,用户裁定拉长等待)。
+        # rc 必须=0 才算 done(2026-10-20 教训:秒败 rc=1 从前被当 done=True,转换从未发生)
+        done = False
+        cli_err = ""
+        for attempt in range(3):
+            try:
+                st = ros2("lifecycle", "set", "/lc_talker", transition, timeout=15)
+                if st.returncode == 0:
+                    done = True
+                    break
+                cli_err = f"rc={st.returncode}:{(st.stderr or '').strip()[:50]}"
+            except subprocess.TimeoutExpired:
+                cli_err = "CLI 超时"
+            time.sleep(3)
+        fr = c.wait_push("lifecycle", timeout=15,
+                         pred=lambda f: f.get("node") == "/lc_talker" and f.get("state") == want)
+        seq_ok = seq_ok and done and fr is not None
+        hit = done and fr is not None
+        why = "" if hit else (f"(CLI {cli_err})" if not done else "(推送未达)")
+        detail.append(f"{transition}→{want}{'✓' if hit else '✗'}{why}")
+        time.sleep(2)   # 拉长间隔:等 DDS 状态稳定(用户裁定:单测放宽防抖动)
+    th.join()
+    drop_client("x3b")
+    ok = seq_ok and out["ok"] == out["n"] == 3
+    return ok, f"状态序 {detail} 并发 resync {out['ok']}/{out['n']}"
+
+
+def sc_x4():
+    """X4 负载反应正确:心跳 cl-num 随连接数精确变化(4→2),busy 空闲归零,rss 恒正"""
+    ensure_helper()
+    c = main_client()
+    extra = [("x4%d" % i, new_client("x4%d" % i)) for i in range(3)]
+    want_full = 1 + len(extra)
+    hb = None
+    end = time.time() + 5
+    while time.time() < end:
+        hb = c.heartbeat
+        if hb and hb.get("cl") == want_full:
+            break
+        time.sleep(0.3)
+    def cl_now():
+        # cl-num 在下行信封上(不在心跳载荷里)——口径同 E1 的 last_envelope
+        return (c.last_envelope or {}).get("cl-num")
+
+    cl_up = bool(hb) and cl_now() == want_full
+    samples = [cl_now()]
+    time.sleep(2.2)   # 空闲两拍:busy 均值归零
+    hb2 = c.heartbeat
+    idle_ok = bool(hb2) and hb2.get("busy", 1) == 0 and (hb2.get("rss") or 0) > 0
+    drop_client(extra[0][0])
+    drop_client(extra[1][0])
+    hb3 = None
+    end = time.time() + 5
+    while time.time() < end:
+        hb3 = c.heartbeat
+        if hb3 and cl_now() == 2:
+            break
+        time.sleep(0.3)
+    cl_down = bool(hb3) and cl_now() == 2
+    samples.append(cl_now())
+    samples.append(cl_now())
+    for tag, _ in extra:
+        drop_client(tag)
+    ok = cl_up and idle_ok and cl_down
+    return ok, f"cl {want_full}→2 精确({cl_up}/{cl_down});busy 空闲归零+rss>0={idle_ok};cl采样={samples}"
+
+
+def sc_x5():
+    """X5 DDS 域隔离负向:域外(98)节点对图完全不可见——隔离正确性(负向断言)"""
+    ensure_helper()
+    main_client().pushes.clear()
+    outside = start_fixture("rde_listener.py", {"ROS_DOMAIN_ID": "98"})
+    fr = main_client().wait_push("graph", timeout=8,
+                                 pred=lambda f: "/listener" in (f.get("nodes") or []))
+    snap, _ = main_client().request("resync", 10)
+    nodes = ((snap or {}).get("data") or {}).get("nodes") or []
+    invisible = fr is None and "/listener" not in nodes
+    subprocess.run(["pkill", "-f", "rde_listene[r]"], capture_output=True)
+    return invisible, ("域外节点不可见=隔离生效" if invisible
+                       else "域外节点泄漏进图(隔离失效,DDS 域偏移被破坏)")
+
+
+# ---- 版本治理(规范=src/ros2/consumers/monitor/helper/VERSION-CONTROL.md,冻结文件) ----
+# 参考实现:X6/X7/X8 用它演客户端的「杀旧拉新」裁定——TS 侧真实现由 helper-versioning
+# 无头套件盖;这里验服务端契约(锁四字段落盘/argv 通道/flock/杀安全)+算法在真进程可行。
+
+
+def kill_helper():
+    """杀现役助手并清 socket/锁(场景内自管,不动全清场)"""
+    subprocess.run(["pkill", "-f", "param_helpe[r].py"], capture_output=True)
+    time.sleep(0.8)
+    for p in (SOCK, LOCK):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+
+
+def read_lock_fields():
+    try:
+        return open(LOCK, encoding="utf-8").read().split()
+    except OSError:
+        return None
+
+
+def proc_state(pid):
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            return f.read().rsplit(")", 1)[1].split()[0]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def proc_alive(pid):
+    # 僵尸滤除(D3a 同款教训):本脚本是被杀助手的父进程,SIGKILL 后子进程成 zombie
+    # 直到父进程 reap——kill(pid,0) 对 zombie 返回真,/proc state=Z 才是真死判据
+    st = proc_state(pid)
+    if st is not None:
+        return st != "Z"
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def proc_start_ticks(pid):
+    try:
+        with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as f:
+            return f.read().rsplit(")", 1)[1].split()[19]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def wait_lock_version(want, timeout=10.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        f = read_lock_fields()
+        if f and len(f) >= 4 and f[3] == want:
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def replace_if_older(my_version):
+    """规范 §2 参考实现:返回 (verdict, pid)——replaced=已杀旧(待拉新)/yield=让位或禁用/none=无锁"""
+    fields = read_lock_fields()
+    if not fields or not proc_alive(fields[0]):
+        return "none", None
+
+    def parse(v):
+        try:
+            return tuple(int(x) for x in str(v).split("."))
+        except (ValueError, AttributeError):
+            return None
+    mine = parse(my_version)
+    if mine is None:
+        return "yield", int(fields[0])          # 治理禁用
+    lock_ver = fields[3] if len(fields) >= 4 else None
+    lock_p = parse(lock_ver) if lock_ver else None
+    do_replace = True if lock_p is None else lock_p < mine
+    if not do_replace:
+        return "yield", int(fields[0])
+    pid = int(fields[0])
+    ticks = proc_start_ticks(pid)
+    if ticks is not None and str(ticks) != fields[2]:
+        return "yield", pid                      # ticks 对账失败=pid 已换人,绝不杀
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return "replaced", pid
+
+
+def sc_x6():
+    """X6 版本治理·杀旧拉新:0.0.4 助手在跑 → 0.0.5 客户端按规范替换 →
+    旧 pid 死、新版本锁落盘、新客户端在线"""
+    kill_helper()
+    CTX["helper"] = spawn_helper(["--ext-version", "0.0.4"])
+    if not wait_lock_version("0.0.4"):
+        return False, "0.0.4 锁版本未落盘(argv 通道断?)"
+    old = read_lock_fields()
+    old_pid = int(old[0])
+    c = new_client("x6old")
+    if not c.online:
+        return False, "旧版本助手未服务(x6old 不在线)"
+    verdict, killed = replace_if_older("0.0.5")
+    if verdict != "replaced" or killed != old_pid:
+        return False, f"裁定错误:verdict={verdict} killed={killed}(期望 replaced/{old_pid})"
+    end = time.time() + 5
+    while time.time() < end and proc_alive(old_pid):
+        time.sleep(0.2)
+    if proc_alive(old_pid):
+        return False, f"旧助手 pid={old_pid} 杀后仍活"
+    CTX["helper"] = spawn_helper(["--ext-version", "0.0.5"])
+    if not wait_lock_version("0.0.5"):
+        return False, "0.0.5 锁版本未落盘"
+    c2 = new_client("x6new")
+    ok = c2.online and c2.service_pid == int(read_lock_fields()[0])
+    return ok, (f"0.0.4(pid={old_pid})被杀✓ → 0.0.5 拉起✓ 锁版本={read_lock_fields()[3]} "
+                f"新客户端在线={c2.online} 新 pid={c2.service_pid}")
+
+
+def sc_x7():
+    """X7 版本治理·让位:0.0.6 助手在跑,0.0.5 客户端比对 → 不杀,pid 不变,共享在线"""
+    kill_helper()
+    CTX["helper"] = spawn_helper(["--ext-version", "0.0.6"])
+    if not wait_lock_version("0.0.6"):
+        return False, "0.0.6 锁版本未落盘"
+    pid_before = int(read_lock_fields()[0])
+    c = new_client("x7c")
+    verdict, _ = replace_if_older("0.0.5")
+    time.sleep(1.0)
+    unchanged = verdict == "yield" and read_lock_fields()[0] == str(pid_before) and proc_alive(pid_before)
+    ping, _ = c.request("ping", 5)
+    ok = unchanged and bool(ping and ping.get("success"))
+    return ok, f"0.0.5 遇 0.0.6 服务端:verdict={verdict} pid 不变={unchanged} ping={'ok' if ping and ping.get('success') else '败'}"
+
+
+def sc_x8():
+    """X8 版本治理·legacy:无版本字段(占位 0,=0.0.3- 遗留形态)→ 按最旧替换"""
+    kill_helper()
+    CTX["helper"] = spawn_helper()   # 不带 --ext-version → 锁版本 "0"
+    if not wait_lock_version("0"):
+        return False, "占位版本 0 未落盘"
+    verdict, _ = replace_if_older("0.0.5")
+    if verdict != "replaced":
+        return False, f"legacy 锁应按最旧替换,实测 verdict={verdict}"
+    CTX["helper"] = spawn_helper(["--ext-version", "0.0.5"])
+    ok = wait_lock_version("0.0.5")
+    return ok, f"占位 0 → replaced✓ → 0.0.5 落盘={'✓' if ok else '✗'}"
+
+
 # ---- 新增场景辅助:服务端磁盘日志窗口读取 ----
 
 def log_size():
@@ -774,7 +1327,10 @@ def sc_c5():
     c = main_client()
     c.pushes.clear()
     off = log_size()
-    ros2("param", "set", "/talker", "use_sim_time", "true")
+    try:
+        ros2_checked("param", "set", "/talker", "use_sim_time", "true")
+    except RuntimeError as e:
+        return False, f"CLI 改参失败,负向断言空洞不成立(杜绝假过):{e}"
     time.sleep(5)   # cli 生灭 + 若干差分周期
     cli_in_log = "_ros2cli" in log_since(off)
     bad_nodes, bad_services, bad_ps = [], [], []
@@ -792,32 +1348,75 @@ def sc_c5():
 def sc_c6():
     """生命周期订阅对账生死循环:kill→消失→重启→回归→转换仍推"""
     c = main_client()
-    subprocess.run(["pkill", "-f", "lifecycle_talke[r]"], capture_output=True)
+    subprocess.run(["pkill", "-f", "rde_lc_talke[r]"], capture_output=True)
     fr = c.wait_push("graph", timeout=15, pred=lambda f: "/lc_talker" not in (f.get("nodes") or []))
     if not fr:
         return False, "未收到 lc_talker 消失的 graph push"
     off = log_size()
-    CTX["demos"]["lc"] = start_node("lifecycle", "lifecycle_talker")
+    CTX["demos"]["lc"] = start_fixture("rde_lc_talker.py")
     fr2 = c.wait_push("graph", timeout=25, pred=lambda f: "/lc_talker" in (f.get("nodes") or []))
     if not fr2:
         return False, "未收到 lc_talker 回归的 graph push"
-    # lc_pid 刷新:二进制 exec 需要 1~2s,pgrep 重试直到命中(空 pid=SIGSTOP 空枪,D3a 教训)
+    # lc_pid 刷新:二进制 exec 需要 1~2s,pgrep 重试直到命中(空 pid=SIGSTOP 空枪,D3a 教训)。
+    # 2026-10-19 加固:滤僵尸+1s 存活复验——偶发捕到速死进程会让 D3 全线空枪(flake 实证)
     lc_pid = ""
     end = time.time() + 8
     while time.time() < end and not lc_pid:
-        out = subprocess.run(["pgrep", "-f", "lib/lifecycle/lifecycle_talke[r]"], capture_output=True, text=True)
-        lc_pid = out.stdout.strip().split("\n")[0]
-        if not lc_pid:
+        out = subprocess.run(["pgrep", "-f", "rde_lc_talke[r]"], capture_output=True, text=True)
+        cands = [p for p in out.stdout.strip().split("\n") if p and lc_state(p) not in (None, "Z")]
+        if cands:
+            cand = cands[-1]
+            time.sleep(1.0)
+            if lc_state(cand) not in (None, "Z"):
+                lc_pid = cand
+        else:
             time.sleep(0.3)
     CTX["lc_pid"] = lc_pid
     time.sleep(1.0)   # 订阅对账 + 权威详情补推
     reconciled = "订阅对账" in log_since(off)
-    ros2("lifecycle", "set", "/lc_talker", "configure")
+    try:
+        ros2_checked("lifecycle", "set", "/lc_talker", "configure")
+    except RuntimeError as e:
+        return False, f"CLI 转换失败:{e}"
     fr3 = c.wait_push("lifecycle", timeout=12,
                       pred=lambda f: f.get("node") == "/lc_talker" and f.get("state") == "inactive")
     return fr3 is not None and reconciled and bool(lc_pid), \
         (f"回归后转换权威 push {'收到' if fr3 else '未收到'};订阅对账日志={reconciled};"
          f"lc_pid={lc_pid or '未捕获!'}")
+
+
+def sc_f6():
+    """生命周期卡转有感(F6,破坏性夹具 RDE_TEST_HANG_SEC):on_configure 挂住 →
+    转换 CLI 超时=有感不静默(绝不假成功),助手不受累(ping 正常)。
+    收尾恢复健康 lc(D3 系 SIGSTOP 依赖健康节点,ensure_lc_node 兜底)。"""
+    subprocess.run(["pkill", "-f", "rde_lc_talke[r]"], capture_output=True)
+    fr = main_client().wait_push("graph", timeout=15,
+                                 pred=lambda f: "/lc_talker" not in (f.get("nodes") or []))
+    if fr is None:
+        return False, "旧 lc 未下线(前置失败)"
+    CTX["demos"]["lc"] = start_fixture("rde_lc_talker.py", {"RDE_TEST_HANG_SEC": "8"})
+    fr2 = main_client().wait_push("graph", timeout=25,
+                                  pred=lambda f: "/lc_talker" in (f.get("nodes") or []))
+    if fr2 is None:
+        return False, "挂断夹具未回图(前置失败)"
+    time.sleep(1.5)
+    cli_err = ""
+    try:
+        st = ros2("lifecycle", "set", "/lc_talker", "configure", timeout=6)
+        timed_out = False
+        if st.returncode != 0:
+            # 秒败(daemon 聋/节点未发现)≠卡转超时——记录原因,红要红得明明白白
+            cli_err = (st.stderr or "").strip()[:80]
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    r, _ = main_client().request("ping", 5)
+    alive = bool(r and r.get("success"))
+    # 收尾:杀挂断体,恢复健康 lc(下一场景依赖)
+    subprocess.run(["pkill", "-f", "rde_lc_talke[r]"], capture_output=True)
+    CTX["demos"]["lc"] = start_fixture("rde_lc_talker.py")
+    main_client().wait_push("graph", timeout=25, pred=lambda f: "/lc_talker" in (f.get("nodes") or []))
+    return timed_out and alive, (f"卡转超时有感={timed_out}(绝不假成功);助手不受累={alive}"
+                                 + (f";CLI 秒败:{cli_err}" if cli_err else ""))
 
 
 def sc_b10():
@@ -835,7 +1434,10 @@ def sc_b10():
     if before != after:
         return False, f"账本回显变化:{before} → {after}"
     c.pushes.clear()
-    ros2("param", "set", "/talker", "use_sim_time", "true")
+    try:
+        ros2_checked("param", "set", "/talker", "use_sim_time", "true")
+    except RuntimeError as e:
+        return False, f"CLI 改参失败:{e}"
     fr = c.wait_push("param", timeout=8,
                      pred=lambda f: "use_sim_time" in (f.get("values") or {}).get("/talker", {}))
     return fr is not None, "resync 后 push 仍送达(账本保留)" if fr else "resync 后收不到 push(账本被清)"
@@ -852,7 +1454,10 @@ def sc_b11():
     drop_client("leakA")
     time.sleep(1)
     b.pushes.clear()
-    ros2("param", "set", "/talker", "use_sim_time", "false")
+    try:
+        ros2_checked("param", "set", "/talker", "use_sim_time", "false")
+    except RuntimeError as e:
+        return False, f"CLI 改参失败,负向断言空洞不成立(杜绝假过):{e}"
     time.sleep(3)
     leak = [f for f in b.pushes if f.get("kind") == "param"]
     cleared = "账本随连接清" in log_since(off)
@@ -865,24 +1470,48 @@ def sc_b12():
     return bool(r and not r.get("success") and r.get("error")), f"error={(r or {}).get('error', '')[:50]}"
 
 
+def sc_b13():
+    """多参数夹具(B13):/multi_param 12 参全类型+点分命名空间,一次取全。
+    自清理:残留的同名节点会让图名集无变化=永远无 push(B13 首跑假死根因)"""
+    subprocess.run(["pkill", "-f", "rde_multi_para[m]"], capture_output=True)
+    CTX["demos"]["multi"] = start_fixture("rde_multi_param.py")
+    fr = main_client().wait_push("graph", timeout=15,
+                                 pred=lambda f: "/multi_param" in (f.get("nodes") or []))
+    if fr is None:
+        subprocess.run(["pkill", "-f", "rde_multi_para[m]"], capture_output=True)
+        return False, "15s 未收到含 /multi_param 的 graph push"
+    time.sleep(1.0)   # 参数服务就绪一拍
+    names = ["flag", "level", "ratio", "label", "flags", "levels", "ratios", "labels",
+             "group.depth", "group.mode", "group.ratios", "group.flags"]
+    r, _ = main_client().request("get_param_values", 15, node="/multi_param", names=names)
+    # 回应=账本回显:data.node 以节点名为键,本节点的值映射才是参数字典
+    data = (((r or {}).get("data") or {}).get("node") or {}).get("/multi_param") or {}
+    got = sorted(data.keys())
+    subprocess.run(["pkill", "-f", "rde_multi_para[m]"], capture_output=True)
+    ok = bool(r and r.get("success")) and got == sorted(names)
+    return ok, f"一次取全 {len(got)}/12" + ("" if ok else f":{got}")
+
+
 def sc_d7():
     """节点消失清账+回归不自动重订阅(裁定 2026-10-07)"""
     c = main_client()
     r = request_ok(c, "get_param_values", node="/talker", names=["use_sim_time"])
     if not (r and r.get("success")):
         return False, "前置订阅失败"
-    subprocess.run(["pkill", "-f", "demo_nodes_cpp/talke[r]"], capture_output=True)
-    subprocess.run(["pkill", "-f", "run demo_nodes_cpp talke[r]"], capture_output=True)
+    subprocess.run(["pkill", "-f", "rde_talke[r]"], capture_output=True)
     fr = c.wait_push("graph", timeout=15, pred=lambda f: "/talker" not in (f.get("nodes") or []))
     if not fr:
         return False, "未收到 talker 消失的 graph push"
-    CTX["demos"]["talker"] = start_node("demo_nodes_cpp", "talker")
+    CTX["demos"]["talker"] = start_fixture("rde_talker.py")
     fr2 = c.wait_push("graph", timeout=25, pred=lambda f: "/talker" in (f.get("nodes") or []))
     if not fr2:
         return False, "未收到 talker 回归的 graph push"
     time.sleep(1.5)   # 名册补推
     c.pushes.clear()
-    ros2("param", "set", "/talker", "use_sim_time", "true")
+    try:
+        ros2_checked("param", "set", "/talker", "use_sim_time", "true")
+    except RuntimeError as e:
+        return False, f"CLI 改参失败,负向半段空洞不成立:{e}"
     time.sleep(3)
     leak = [f for f in c.pushes if f.get("kind") == "param"
             and "use_sim_time" in (f.get("values") or {}).get("/talker", {})]
@@ -892,7 +1521,10 @@ def sc_d7():
     if not (r2 and r2.get("success")):
         return False, "显式重订失败"
     c.pushes.clear()
-    ros2("param", "set", "/talker", "use_sim_time", "false")
+    try:
+        ros2_checked("param", "set", "/talker", "use_sim_time", "false")
+    except RuntimeError as e:
+        return False, f"重订后 CLI 改参失败:{e}"
     fr3 = c.wait_push("param", timeout=8,
                       pred=lambda f: "use_sim_time" in (f.get("values") or {}).get("/talker", {}))
     return fr3 is not None, "回归后零推送(账已清)+显式重订后恢复" if fr3 else "显式重订后仍收不到"
@@ -905,39 +1537,54 @@ def sc_g1():
     r = c.expand("/talker")
     if not (r and r.get("success")):
         return False, "expand 失败"
+
+    def setv(v):
+        """承重改参查 rc(2026-10-20):返回错误串,空串=成功——step3 负向断言若不查 rc,
+        daemon 聋时 CLI 秒败=零推送自然成立=假过"""
+        try:
+            ros2_checked("param", "set", "/talker", "use_sim_time", v)
+            return ""
+        except RuntimeError as e:
+            return str(e)
+
     c.param_push_count = 0
-    ros2("param", "set", "/talker", "use_sim_time", "true")
+    err1 = setv("true")
     end = time.time() + 8
     while time.time() < end and c.param_push_count == 0:
         time.sleep(0.2)
-    step1 = c.param_push_count >= 1
+    step1 = err1 == "" and c.param_push_count >= 1
     c.collapse("/talker")
     c.param_push_count = 0
-    ros2("param", "set", "/talker", "use_sim_time", "false")
+    err2 = setv("false")
     end = time.time() + 4
     while time.time() < end and c.param_push_count == 0:
         time.sleep(0.1)
-    step2 = c.param_push_count >= 1
+    step2 = err2 == "" and c.param_push_count >= 1
     time.sleep(2.5)   # 防抖到期,已退订
     c.param_push_count = 0
-    ros2("param", "set", "/talker", "use_sim_time", "true")
+    err3 = setv("true")
     time.sleep(3)
-    step3 = c.param_push_count == 0
+    step3 = err3 == "" and c.param_push_count == 0
     step3_detail = ""
     if not step3:
-        step3_detail = ";step3 收到:" + json.dumps(c.param_push_log[-1], ensure_ascii=False)[:200]
+        if err3:
+            step3_detail = f";step3 CLI 败:{err3}"
+        else:
+            step3_detail = ";step3 收到:" + json.dumps(c.param_push_log[-1], ensure_ascii=False)[:200]
     r2 = c.expand("/talker")
     r2_err = "" if (r2 and r2.get("success")) else f" 重展失败:{(r2 or {}).get('error', '')[:60]}"
     c.param_push_count = 0
-    ros2("param", "set", "/talker", "use_sim_time", "false")
+    err4 = setv("false")
     end = time.time() + 8
     while time.time() < end and c.param_push_count == 0:
         time.sleep(0.1)
-    step4 = c.param_push_count >= 1
+    step4 = err4 == "" and c.param_push_count >= 1
     drop_client("behav1")
     ok = step1 and step2 and step3 and step4 and bool(r2 and r2.get("success"))
+    cli_note = "".join(f";set{v}败:{e}" for v, e in
+                       (("1", err1), ("2", err2), ("4", err4)) if e)
     return ok, (f"展开收={step1} 防抖窗内收={step2} 退订后零收={step3} 重展收={step4}"
-                + step3_detail + r2_err)
+                + cli_note + step3_detail + r2_err)
 
 
 def sc_g2():
@@ -952,7 +1599,10 @@ def sc_g2():
     if not (r and r.get("success")):
         return False, "resync 失败"
     c.param_push_count = 0
-    ros2("param", "set", "/talker", "use_sim_time", "true")
+    try:
+        ros2_checked("param", "set", "/talker", "use_sim_time", "true")
+    except RuntimeError as e:
+        return False, f"CLI 改参失败:{e}"
     end = time.time() + 8
     while time.time() < end and c.param_push_count == 0:
         time.sleep(0.1)
@@ -961,7 +1611,7 @@ def sc_g2():
 
 
 SCENARIOS = [
-    ("A1", "连接即注册:resync 快照+信封三字段+锁文件三字段", None, sc_a1),
+    ("A1", "连接即注册:resync 快照+信封三字段+锁文件四字段", None, sc_a1),
     ("A2", "三客户端并发 resync+ping", None, sc_a2),
     ("A3", "断开重连,服务端启动时刻不变", None, sc_a3),
     ("A4", "resync 后辅助推送:名册+生命周期广播", None, sc_a4),
@@ -978,9 +1628,11 @@ SCENARIOS = [
     ("C2", "转换权威 lifecycle push(边无 id)", None, sc_c2),
     ("C5", "ros2cli 临时节点过滤(不进图/不推名册/不白烧)", None, sc_c5),
     ("C6", "生命周期订阅对账(生死循环)", None, sc_c6),
+    ("F6", "生命周期卡转有感:configure 挂起→转换超时,助手不受累", None, sc_f6),
     ("B10", "resync 不清账本", None, sc_b10),
     ("B11", "断开清账不泄漏", None, sc_b11),
     ("B12", "get_form 未知类型错误路径", None, sc_b12),
+    ("B13", "多参数夹具:12 参一次取全(全类型+点分命名空间)", None, sc_b13),
     ("D7", "节点消失清账+回归不自动重订阅", None, sc_d7),
     ("G1", "行为客户端全链路(展开/防抖两侧/重展)", None, sc_g1),
     ("G2", "行为客户端 × 重同步", None, sc_g2),
@@ -992,6 +1644,15 @@ SCENARIOS = [
     ("D4", "尸体 socket 接管", None, sc_d4),
     ("D5", "flock 竞速双 spawn 恰活一", None, sc_d5),
     ("D6", "零客户端宽限自退(收尾)", None, sc_d6),
+    ("D8", "stderr 断管自退(僵尸助手钳)", None, sc_d8),
+    ("X1", "复合·堵转下新接入(A 冻结烧灼;B 客户端/节点及时且不传染)", None, sc_x1),
+    ("X2", "复合·堵转下数据流正确性(改参推送及时且值正确)", None, sc_x2),
+    ("X3", "复合·生命周期并发(转换链×resync 风暴,状态序正确)", None, sc_x3),
+    ("X4", "复合·负载反应正确(cl 精确/busy 归零/rss 恒正)", None, sc_x4),
+    ("X5", "复合·DDS 域隔离负向(域外节点不可见)", None, sc_x5),
+    ("X6", "复合·版本治理杀旧拉新(锁四字段+ticks 核对+替换后新版本在线)", None, sc_x6),
+    ("X7", "复合·版本治理让位(锁版本更新 → 不杀,pid 不变)", None, sc_x7),
+    ("X8", "复合·版本治理 legacy(无版本字段 → 按最旧替换)", None, sc_x8),
 ]
 
 
@@ -1010,12 +1671,32 @@ def main():
     clean_slate()
     CTX["helper"] = spawn_helper()
     time.sleep(1.0)
-    CTX["demos"]["talker"] = start_node("demo_nodes_cpp", "talker")
-    CTX["demos"]["lc"] = start_node("lifecycle", "lifecycle_talker")
+    CTX["demos"]["talker"] = start_fixture("rde_talker.py")
+    CTX["demos"]["lc"] = start_fixture("rde_lc_talker.py")
     time.sleep(5)
-    out = subprocess.run(["pgrep", "-f", "lib/lifecycle/lifecycle_talke[r]"], capture_output=True, text=True)
+    out = subprocess.run(["pgrep", "-f", "rde_lc_talke[r]"], capture_output=True, text=True)
     CTX["lc_pid"] = out.stdout.strip().split("\n")[0]
-    new_client("main")
+    # daemon 聋检测(2026-10-20 教训):夹具已起而 CLI 图查询看不见=daemon 聋,后续一切
+    # CLI 承重场景的断言全部 vacuous——开工前显式报警,红要红得知道是环境不是回归。
+    # (场景自身的 ros2_checked rc 检查是第二道防线,负向断言场景靠它防假过)
+    daemon_ok = False
+    for _ in range(3):
+        nl = subprocess.run(["ros2", "node", "list"], capture_output=True, text=True,
+                            env=ENV, timeout=20)
+        if {"/talker", "/lc_talker"} <= set(nl.stdout.split()):
+            daemon_ok = True
+            break
+        time.sleep(3)
+    if not daemon_ok:
+        print("!! 警告:ros2 daemon 图查询看不见夹具(/talker //lc_talker)——daemon 聋,"
+              "CLI 承重场景将红,原因看各场景 detail 的「CLI 败」字样;这是环境病不是助手回归",
+              flush=True)
+    try:
+        new_client("main")
+    except BaseException:
+        # setup 阶段崩溃(如 resync 被拒)也必须清场——此前 finally 不覆盖这里,残留屡禁不止
+        kill_all_fixtures()
+        raise
 
     rows = []
     try:
@@ -1036,6 +1717,7 @@ def main():
             print(f"  {'PASS' if ok else 'FAIL'}  {sid}  {name}")
         print(f"==== {len(rows) - len(fails)}/{len(rows)} PASS ====")
         lc_sigcont()
+        kill_all_fixtures()   # 无残留保险(2026-10-19 用户裁定):执行完必须片甲不留
         sys.exit(1 if fails else 0)
 
 

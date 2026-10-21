@@ -3,7 +3,8 @@
 /**
  * @file share-spec.ts(2026-09-25 新增)
  * 「可共享命令参数模板」与 run 域的**接线适配层** —— 与 `build/share-spec.ts` 同构:
- * 读设置(`ROS2.run.shareSpec` / `ROS2.launch.shareSpec`)→ 与出厂默认合并 → 展开成本次的整条 argv。
+ * 读设置(`ROS2.tool.run.template`+`ROS2.tool.run.presets` / `ROS2.tool.launch.template`+`ROS2.tool.launch.presets`,
+ * 2026-10-17 两拆分;2026-10-18 键族迁 `tool.` 层,呈现 = ROS2 › Tool › Run/Launch)→ 与出厂默认合并 → 展开成本次的整条 argv。
  *
  * ── 与 build 的唯一差别:记忆键**按目标分槽** ────────────────────────
  * 构建的参数对包是均匀的(一条命令一个槽够用);run/launch 的参数因目标而异(用户裁定 2026-09-25),
@@ -17,25 +18,50 @@ import { getLogger } from "../../../logger";
 import { ROS2_LAUNCH_SPEC, ros2LaunchDynamics } from "../share/defaults/ros2-launch";
 import { ROS2_RUN_SPEC, ros2RunDynamics } from "../share/defaults/ros2-run";
 import { expandCommand, mergeSpec } from "../share/expand";
+import { parsePresetsTable } from "../share/presets-table";
 import type { CommandSpec, ExpandResult } from "../share/types";
 
 /** share-spec 模块日志 */
 const log = getLogger("run-share-spec");
 
-/** 设置键(前缀 `ROS2.` 由 getConfiguration 提供) */
-export const ROS_RUN_SETTING = "run.shareSpec";
-export const ROS_LAUNCH_SETTING = "launch.shareSpec";
+/** 设置键(前缀 `ROS2.` 由 getConfiguration 提供;2026-10-17 两拆分:shareSpec 对象键 → template + presets 两个平级键;2026-10-18 键族迁 `tool.` 层) */
+export const ROS_RUN_TEMPLATE_SETTING = "tool.run.template";
+export const ROS_RUN_PRESETS_SETTING = "tool.run.presets";
+export const ROS_LAUNCH_TEMPLATE_SETTING = "tool.launch.template";
+export const ROS_LAUNCH_PRESETS_SETTING = "tool.launch.presets";
 
-/** 读设置里的 run spec:字段缺失回落出厂默认;显式给空则尊重用户(见 mergeSpec) */
+/**
+ * 两拆分共用的读法(与 build/share-spec.ts 同构):template 字符串键 + presets 键值表键 →
+ * partial 形状 → `mergeSpec` 与出厂默认合并;缺失/非串/整表报废回落出厂,显式给空尊重用户。
+ */
+function readSpec(templateSetting: string, presetsSetting: string, factory: CommandSpec): CommandSpec {
+    const cfg = vscode.workspace.getConfiguration("ROS2");
+    const template = cfg.get<unknown>(templateSetting);
+    const raw: Partial<CommandSpec> = {};
+    if (typeof template === "string") {
+        raw.template = template;
+    }
+    const presets = parsePresetsTable(cfg.get<unknown>(presetsSetting));
+    if (presets !== undefined) {
+        if (presets.custom !== undefined) {
+            raw.custom = presets.custom;
+        }
+        if (presets.customHint !== undefined) {
+            raw.customHint = presets.customHint;
+        }
+        raw.argv_list = presets.argv_list;
+    }
+    return mergeSpec(raw, factory);
+}
+
+/** 读设置里的 run spec(缺失回落出厂默认;显式给空尊重用户) */
 export function readRosRunSpec(): CommandSpec {
-    const raw = vscode.workspace.getConfiguration("ROS2").get<Partial<CommandSpec>>(ROS_RUN_SETTING);
-    return mergeSpec(raw, ROS2_RUN_SPEC);
+    return readSpec(ROS_RUN_TEMPLATE_SETTING, ROS_RUN_PRESETS_SETTING, ROS2_RUN_SPEC);
 }
 
 /** 读设置里的 launch spec(同上) */
 export function readRosLaunchSpec(): CommandSpec {
-    const raw = vscode.workspace.getConfiguration("ROS2").get<Partial<CommandSpec>>(ROS_LAUNCH_SETTING);
-    return mergeSpec(raw, ROS2_LAUNCH_SPEC);
+    return readSpec(ROS_LAUNCH_TEMPLATE_SETTING, ROS_LAUNCH_PRESETS_SETTING, ROS2_LAUNCH_SPEC);
 }
 
 /** run 域交给引擎的输入 */

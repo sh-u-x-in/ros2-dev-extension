@@ -35,6 +35,17 @@ export interface BuildMapChangeEvent {
     map: BuildMapSnapshot;
 }
 
+/**
+ * ensureFresh 的环境门(P2/P3,模块级由组合根注入;本域零 ros2 依赖,故用注入而非 import):
+ * 门关(环境不可用/陈旧)时消费方查询不再触发扫描——空快照;门开由 reconcile 首扫/构建信号补建。
+ */
+let ensureFreshGate: (() => boolean) | undefined;
+
+/** 注入/清除 ensureFresh 环境门(组合根在阶段 B 调用;undefined = 无门,测试缺省) */
+export function setEnsureFreshGate(gate: (() => boolean) | undefined): void {
+    ensureFreshGate = gate;
+}
+
 /** 快照构建器(可注入,便于单测构造状态) */
 export type BuildMapBuilder = (
     fs: FsLike,
@@ -84,6 +95,7 @@ export async function buildBuildMapSnapshot(
 /**
  * 包 → 最近一次构建时刻(colcon_build.rc mtime;缺失/非文件 = -1,展示层按无效丢弃)。
  * 增量门本来就在逐包读这个值,这里只是把结果随快照带给展示层 —— 零新扫描。
+ * 2026-10-16 起入**全局**指纹(纯重编也让侧边栏重绘;逐包指纹仍不含,见 fingerprintOfSnapshot)。
  */
 async function readBuildTimes(fs: FsLike, ctx: { buildRoot: string }, packages: Map<string, BuildPackage>): Promise<Map<string, number>> {
     const out = new Map<string, number>();
@@ -104,11 +116,18 @@ async function readBuildTimes(fs: FsLike, ctx: { buildRoot: string }, packages: 
  * 2026-09-21:`compilePathsExistLocally` 已删除(域包含性:不判域外存在性),指纹同步移除。
  * 2026-09-30:行生成抽取为 pkgRow/jumpRows/areaRow(与 `packageFingerprints` 共用原子),
  * **全局指纹输出逐字节不变**(既有断言兜底)。
+ * 2026-10-16:buildTimes 以 `T|<pkg>|<mtimeMs>` 行入**全局**指纹(**逐包指纹不加**,分层有测试钉)——
+ * 时间戳自 10-13 起是正式展示数据,纯重编(rc 变、内容同)必须让侧边栏重绘,否则 tooltip 冻结;
+ * 它只随真实重建变化(编辑源码不动它),非重绘风暴。**推翻 10-14「纯展示,不参与指纹」**。
  */
 export function fingerprintOfSnapshot(s: BuildMapSnapshot): string {
     const parts: string[] = [`build=${s.buildRoot}`, `src=${s.srcRoot}`];
     for (const name of Array.from(s.packages.keys()).sort()) {
         parts.push(pkgRow(s.packages.get(name) as BuildPackage));
+    }
+    // buildTimes 行(2026-10-16,见上注):只进全局指纹;无 rc 的包记 -1(与采集口径一致)
+    for (const [name, mtimeMs] of Array.from(s.buildTimes?.entries() ?? []).sort()) {
+        parts.push(`T|${name}|${mtimeMs}`);
     }
     for (const name of Array.from(s.jumps.keys()).sort()) {
         parts.push(...jumpRows(name, s.jumps.get(name) as JumpEntry[]));
@@ -255,6 +274,9 @@ export interface BuildMapCenterOptions {
 // 2026-10-04 i18n:内部 reason ID 改语言中立英文(比较键不随语言变,日志泄漏面随之英文,不进册)
 export const BUILD_SIGNAL_REASON = "build signal";
 
+/** 探针确认差异后的增量刷新原因(2026-10-16):与构建信号同走增量路径;前件 = 探针实测到差异(见 refreshIncremental) */
+export const INCREMENTAL_TOUCH_REASON = "probe touch";
+
 /** build-only 数据中心 */
 export class BuildMapCenter {
     private readonly fs: FsLike;
@@ -282,6 +304,13 @@ export class BuildMapCenter {
      * (-1 = 该包无 rc)。每次成功构建后整体重记;门判定:与当前值不等 / 上次无 rc → 重扫。
      */
     private rcAtScan = new Map<string, number>();
+
+    /**
+     * 探针确认差异的待处理强制包(2026-10-16):单飞合并期间新到的累积于此,下一轮 buildIncremental 消费。
+     * 语义 =「该包不要求 rc 变化作为证据,跳过门的否决」(手工变化不写 rc,rc 门会假阴性;
+     * 证据由探针实测提供)——**绝非无条件重扫**:无探针差异就绝无强制包入队。
+     */
+    private readonly pendingForcePkgs = new Set<string>();
 
     constructor(private readonly opts: BuildMapCenterOptions) {
         this.fs = opts.fs ?? nodeFsLike;
@@ -319,8 +348,13 @@ export class BuildMapCenter {
      * 惰性刷新(消费方调用前使用):**见脏即立即重扫**。
      * 静态解析很轻(roa2_ws ≈ 0.4s),故不做轮询/静默检测 —— 由"谁要看"驱动刷新。
      * 节流:连续调用时同一 `minRefreshIntervalMs` 窗口内最多重扫一次(置脏标记仍保留)。
+     * P2/P3:入口环境门(组合根经 setEnsureFreshGate 注入)——门关时消费方查询不再触发扫描
+     * (空快照;侧边栏届时显示"环境不可用"消息行,门开 reconcile 首扫/信号补建)。
      */
     async ensureFresh(reason = "consumer"): Promise<void> {
+        if (ensureFreshGate && !ensureFreshGate()) {
+            return; // P2/P3 环境门:门关不扫描(空快照;门开由 reconcile 首扫/构建信号补建)
+        }
         if (this.state === null) {
             await this.refresh(reason);
             return;
@@ -388,11 +422,26 @@ export class BuildMapCenter {
      * 构建信号驱动的刷新(2026-09-30;幂等 = 单飞 + 合并,见 `refresh`)。
      * 未就绪 → 全量首扫;已就绪 → **rc-mtime 增量门**:逐包 stat `colcon_build.rc`,
      * 只重扫重写过的包(实测:单包构建恰 1 包重写 → 重扫 ≈69ms/包;全量构建全部重写 → 退化为
-     * 全量,但后台跑 + 双缓冲旧数据照常服务 + 指纹不变不打扰下游)。
+     * 全量,但后台跑 + 双缓冲旧数据照常服务;纯重编以全局事件通知展示消费方——buildTimes 已入
+     * 全局指纹(2026-10-16),测试域(逐包差分)仍安静)。
      * 触发源:extension.ts 订阅 `environmentFacade.onBuildSignal`(手工重设计/13)。
      */
     refreshAfterBuildSignal(): Promise<void> {
         return this.refresh(BUILD_SIGNAL_REASON);
+    }
+
+    /**
+     * 探针确认的增量刷新(2026-10-16):消费方(点击探针)实测到差异后的快速愈合入口。
+     * **前件纪律:扫描的唯一前件 = 探针实测到差异**——无点击无探针,比对无差异零动作。
+     * `forcePkgs` = 探针确认差异所在的包,语义 =「该包不要求 rc 变化作为证据,跳过门的否决」
+     * (手工变化不写 rc,rc 门会假阴性;证据由探针实测提供),其余包仍走 rc 门顺带逮同期真实构建。
+     * 单飞合并期间新到的 forcePkgs 累积,下一轮生效;未就绪走全量首扫。
+     */
+    refreshIncremental(forcePkgs?: string[]): Promise<void> {
+        for (const name of forcePkgs ?? []) {
+            this.pendingForcePkgs.add(name);
+        }
+        return this.refresh(INCREMENTAL_TOUCH_REASON);
     }
 
     /** 刷新(单飞 + 合并) */
@@ -420,6 +469,7 @@ export class BuildMapCenter {
         this.pending = undefined;
         this.dirty = false;
         this.rcAtScan.clear();
+        this.pendingForcePkgs.clear();
     }
 
     private async runLoop(reason: string): Promise<void> {
@@ -427,6 +477,7 @@ export class BuildMapCenter {
         do {
             this.dirty = false;
             await this.buildOnce(current);
+            this.pendingForcePkgs.clear(); // 本轮已消费(全量天然覆盖;增量由 buildIncremental 取用)
             current = this.lastReason;
         } while (this.dirty);
     }
@@ -434,7 +485,7 @@ export class BuildMapCenter {
     private async buildOnce(reason: string): Promise<void> {
         const t0 = this.now();
         try {
-            if (reason === BUILD_SIGNAL_REASON && this.state !== null) {
+            if (this.state !== null && (reason === BUILD_SIGNAL_REASON || reason === INCREMENTAL_TOUCH_REASON)) {
                 await this.buildIncremental(t0, reason);
             } else {
                 await this.buildFull(t0, reason);
@@ -478,20 +529,22 @@ export class BuildMapCenter {
                 candidates.push(name);
             }
         }
-        // 门判定:逐包 stat rc;不等 / 上次无 rc / 新目录 → 重扫(保守:宁可多扫,不可漏新)
+        // 门判定:逐包 stat rc;不等 / 上次无 rc / 新目录 → 重扫(保守:宁可多扫,不可漏新);
+        // 强制包(2026-10-16,探针实测差异后经 refreshIncremental 入队)不要求 rc 证据,直接进重扫集
+        const forced = this.pendingForcePkgs;
         const rcNow = new Map<string, number>();
         const changed: string[] = [];
         for (const name of candidates) {
             const m = await this.rcMtimeOf(ctx.buildRoot, name);
             rcNow.set(name, m);
             const prevRc = this.rcAtScan.get(name);
-            if (!prev.packages.has(name) || prevRc === undefined || prevRc === -1 || prevRc !== m) {
+            if (forced.has(name) || !prev.packages.has(name) || prevRc === undefined || prevRc === -1 || prevRc !== m) {
                 changed.push(name);
             }
         }
         const removed = Array.from(prev.packages.keys()).filter((n) => !rcNow.has(n));
         if (changed.length === 0 && removed.length === 0) {
-            return; // 快速路:零扫描零事件(no-op 构建产物未变)
+            return; // 快速路:零扫描零事件(forcePkgs 只在探针确认差异后存在,必然已进 changed,不会走到这)
         }
         // 按包合成:未变的包连数据带跳转原样保留
         const packages = new Map(prev.packages);
@@ -555,7 +608,7 @@ export class BuildMapCenter {
             packages,
             jumps,
             areas,
-            buildTimes: rcNow, // 增量门逐包读过的 rc mtime,顺手带给展示层(纯展示,不参与指纹)
+            buildTimes: rcNow, // 增量门逐包读过的 rc mtime,顺手带给展示层(2026-10-16 起参与全局指纹:纯重编也让侧边栏重绘;逐包指纹仍不含)
             warnings,
             durationMs: this.now() - t0,
             builtAt: this.now(),

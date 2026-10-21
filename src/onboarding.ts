@@ -87,7 +87,7 @@ export async function showWelcomeIfNeeded(context: vscode.ExtensionContext): Pro
         if (shouldShowWelcome(lastShownVersion, currentVersion)) {
             log.info(vscode.l10n.t("Showing welcome walkthrough: last version {0} -> current {1}",
                 lastShownVersion || vscode.l10n.t("(none)"), currentVersion));
-            const UPDATED_WELCOME_PROMPT = vscode.l10n.t("RDE for ROS 2 has been updated. Show the welcome page?");
+            const UPDATED_WELCOME_PROMPT = vscode.l10n.t("ROS 2 Workbench has been updated. Show the welcome page?");
             const UPDATED_WELCOME_PROMPT_YES = vscode.l10n.t("Yes");
             const UPDATED_WELCOME_PROMPT_NO = vscode.l10n.t("No");
             const UPDATED_WELCOME_PROMPT_NEVER = vscode.l10n.t("Don't Show Again");

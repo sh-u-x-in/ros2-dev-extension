@@ -33,6 +33,7 @@ import * as vscode from "vscode";
 import { isPythonPackage, type PackageEntry } from "../../../package-core/api";
 import * as jsoncParser from "jsonc-parser";
 
+import type { SyncFileReport } from "./intellisense-api";
 import { normalizeCommentLang } from "../../../../../l10n/templates/index";
 import {
     CLANGD_FLAG_ENTRIES,
@@ -220,12 +221,12 @@ function isLegacyUsrInclude(entryOrDir: string): boolean {
  *    applyEntryOverrides 链式解析(空值/环条目不落 canonical);
  *    文件里替换表管辖条目的旧形态(无论链末替换还是空值删除)一律清除,不经"管辖外条目"通道回流队尾。
  */
-export async function syncCppProperties(workspaceRoot: string, includes: string[], overrides?: Record<string, string>): Promise<void> {
+export async function syncCppProperties(workspaceRoot: string, includes: string[], overrides?: Record<string, string>): Promise<SyncFileReport> {
     // 2026-10-15 用户裁定"串行必须做":读-改-写整体入单飞链(与 settings.json 同链,per-root 串行)
     return enqueueSettingsWrite(workspaceRoot, () => syncCppPropertiesInner(workspaceRoot, includes, overrides));
 }
 
-async function syncCppPropertiesInner(workspaceRoot: string, includes: string[], overrides?: Record<string, string>): Promise<void> {
+async function syncCppPropertiesInner(workspaceRoot: string, includes: string[], overrides?: Record<string, string>): Promise<SyncFileReport> {
     const dir = path.join(workspaceRoot, ".vscode");
     const filename = path.join(dir, "c_cpp_properties.json");
     const canonical = applyEntryOverrides(includes.map((i) => toCppIncludeEntry(i, workspaceRoot)), overrides).list; // 管辖条目(规范序,链式解析后)
@@ -258,7 +259,7 @@ async function syncCppPropertiesInner(workspaceRoot: string, includes: string[],
         await fsPromises.mkdir(dir, { recursive: true });
         await writeFileAtomic(filename, JSON.stringify(cppProperties, undefined, 2));
         log.info(`c_cpp_properties.json:文件不存在或无法解析,迫不得已从零生成(includePath ${canonical.length} 条;compileCommands 默认;标准字段不代写)`);
-        return;
+        return { file: "cpp", written: true, facts: { generated: canonical.length } };
     }
     // ---- 认领 ros2 成员(2026-10-14 管理权白名单,用户裁定):只接管第一个 name==="ros2" 的成员;
     //      用户自有成员零接触;没找到 → 追加到数组【末尾】(不抢 [0],用户默认配置零位移);
@@ -292,7 +293,14 @@ async function syncCppPropertiesInner(workspaceRoot: string, includes: string[],
         cfg.includePath = canonical;
         await writeFileAtomic(filename, JSON.stringify(raw, undefined, 2));
         log.info(`c_cpp_properties.json:includePath 键缺失/非数组,已补 ${canonical.length} 条(browse 等其余字段与键序原样保留)`);
-        return;
+        const surgicalFacts: Record<string, number> = { surgical: canonical.length };
+        if (claimChanged) {
+            surgicalFacts.claimed = 1;
+        }
+        if (dupCount > 0) {
+            surgicalFacts.dedup = dupCount;
+        }
+        return { file: "cpp", written: true, facts: surgicalFacts };
     }
     // 重排:管辖条目规范序在前;管辖外额外条目按原顺序去重追加(不参与管辖顺序判断)
     // 历史残留 /usr/include 条目(上版生成器收录,现属编译器默认、不归管辖)→ 清除
@@ -353,9 +361,31 @@ async function syncCppPropertiesInner(workspaceRoot: string, includes: string[],
             }
         }
         log.info(`c_cpp_properties.json:已更新(${parts.join(";")})`);
-    } else {
-        log.debug("c_cpp_properties.json:无变化,不写盘");
+        const facts: Record<string, number> = {};
+        if (claimChanged) {
+            facts.claimed = 1;
+        }
+        if (dupCount > 0) {
+            facts.dedup = dupCount;
+        }
+        if (pathChanged) {
+            facts.reorder = 1;
+            facts.managed = canonical.length;
+            facts.leftover = leftovers.length;
+            if (usrRemoved > 0) {
+                facts.usrClean = usrRemoved;
+            }
+            if (managedRemoved > 0) {
+                facts.staleClean = managedRemoved;
+            }
+            if (ovRemoved > 0) {
+                facts.ovClean = ovRemoved;
+            }
+        }
+        return { file: "cpp", written: true, facts };
     }
+    log.debug("c_cpp_properties.json:无变化,不写盘");
+    return { file: "cpp", written: false, facts: {}, idle: "no-change" };
 }
 /**
  * Python extraPaths:工作区包 = ament_python 包根(方案 A 按类型分派) + **静态安装路径模板**
@@ -375,11 +405,11 @@ export async function syncPythonPaths(
     layout: InstallLayout = "isolated",
     tpl: DistroPathTemplate = DEFAULT_PATH_TEMPLATE,
     overrides?: Record<string, string>
-): Promise<void> {
-    await enqueueSettingsWrite(workspaceRoot, () => syncPythonPathsInner(workspaceRoot, entries, envDirs, layout, tpl, overrides));
+): Promise<SyncFileReport> {
+    return enqueueSettingsWrite(workspaceRoot, () => syncPythonPathsInner(workspaceRoot, entries, envDirs, layout, tpl, overrides));
 }
 
-async function syncPythonPathsInner(workspaceRoot: string, entries: PackageEntry[], envDirs: string[], layout: InstallLayout, tpl: DistroPathTemplate, overrides?: Record<string, string>): Promise<void> {
+async function syncPythonPathsInner(workspaceRoot: string, entries: PackageEntry[], envDirs: string[], layout: InstallLayout, tpl: DistroPathTemplate, overrides?: Record<string, string>): Promise<SyncFileReport> {
     // 按类型分派(2026-09-02 方案 A):ament_python 包根(= 源码,官方布局 setup.py 必在包根);
     // C++ 包根不进 extraPaths。
     const pythonPkgs = entries.filter((p) => isPythonPackage(p));
@@ -402,7 +432,7 @@ async function syncPythonPathsInner(workspaceRoot: string, entries: PackageEntry
     // 旧条目由 syncKey 的替换表管辖分支清除(src 包根不是构建产物,不走既有 install/build 残留删除通道)。
     const rawMerged = Array.from(new Set([...pythonDirs, ...installDirs, ...developDirs, ...envDirs]));
     if (rawMerged.length === 0) {
-        return;
+        return { file: "python", written: false, facts: {}, idle: "empty" };
     }
     const ovRes = applyEntryOverrides(rawMerged, overrides);
     const mergedDirs = ovRes.list;
@@ -413,6 +443,10 @@ async function syncPythonPathsInner(workspaceRoot: string, entries: PackageEntry
     // 以原相对顺序保留在队尾,且写盘与否的比较只看管辖段**——用户调整队尾/自加条目不触发重写。
     // 用户条目保留、不覆盖(2026-09-02 语义不变)。
     const cfg = vscode.workspace.getConfiguration();
+    // 报表累计(2026-10-20 动态反馈):双键合计,零写盘行为变化
+    let rewritten = 0;
+    let addedTotal = 0;
+    let ovCleanTotal = 0;
     const syncKey = async (key: string, label: string): Promise<void> => {
         const cur = cfg.get<string[]>(key, []);
         const inM = new Set(mergedDirs);
@@ -440,9 +474,27 @@ async function syncPythonPathsInner(workspaceRoot: string, entries: PackageEntry
         await cfg.update(key, desired, vscode.ConfigurationTarget.Workspace);
         const added = desired.length - cur.length;
         log.info(`${label} ${added > 0 ? `补充 ${added} 条并规范重排` : "规范重排"}后共 ${desired.length} 条${ovRemoved > 0 ? `(替换表管辖旧形态清除 ${ovRemoved} 条)` : ""}`);
+        rewritten++;
+        if (added > 0) {
+            addedTotal += added;
+        }
+        if (ovRemoved > 0) {
+            ovCleanTotal += ovRemoved;
+        }
     };
     await syncKey("python.autoComplete.extraPaths", "settings.json:python.autoComplete.extraPaths");
     await syncKey("python.analysis.extraPaths", "settings.json:python.analysis.extraPaths");
+    if (rewritten === 0) {
+        return { file: "python", written: false, facts: {}, idle: "no-change" };
+    }
+    const facts: Record<string, number> = { rewritten };
+    if (addedTotal > 0) {
+        facts.added = addedTotal;
+    }
+    if (ovCleanTotal > 0) {
+        facts.ovClean = ovCleanTotal;
+    }
+    return { file: "python", written: true, facts };
 }
 
 /* ================================================================== */
@@ -735,12 +787,12 @@ export function tidyClangdAddLines(
  *  - flow(用户风格):保守——仅缺失条目在 `]` 前插入,不做归正;
  *  - 不整块重排(列表太长,用户无法核对条目位置)。
  */
-export async function syncClangd(workspaceRoot: string, groups: { ws: string[]; install?: string[]; sys: string[] }, layout: InstallLayout = "isolated", overrides?: Record<string, string>): Promise<void> {
+export async function syncClangd(workspaceRoot: string, groups: { ws: string[]; install?: string[]; sys: string[] }, layout: InstallLayout = "isolated", overrides?: Record<string, string>): Promise<SyncFileReport> {
     // 2026-10-15 用户裁定"串行必须做":读-改-写整体入单飞链(per-root 串行,与 cpp 同链互斥)
     return enqueueSettingsWrite(workspaceRoot, () => syncClangdInner(workspaceRoot, groups, layout, overrides));
 }
 
-async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; install?: string[]; sys: string[] }, layout: InstallLayout, overrides?: Record<string, string>): Promise<void> {
+async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; install?: string[]; sys: string[] }, layout: InstallLayout, overrides?: Record<string, string>): Promise<SyncFileReport> {
     const filename = path.join(workspaceRoot, ".clangd");
     const dirs = await clangdGroupDirs(groups.ws, groups.install ?? [], groups.sys);
     // 替换表(2026-10-14,clangd 键 `ide.entryOverrides.clangd`,本文件专属):四组 token 各自链式解析至不动点
@@ -787,7 +839,17 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
         }
         await writeFileAtomic(filename, lines.join("\n") + "\n");
         log.info(`.clangd:已生成(CompileFlags.CompilationDatabase:build;布局 ${layout};Add 标志 ${flagsTokens.length}/工作空间 -I ${wsTokens.length}/安装 -isystem ${installTokens.length}/发行版 -isystem ${sysTokens.length})`);
-        return;
+        return {
+            file: "clangd",
+            written: true,
+            facts: {
+                generated: 1,
+                genFlags: flagsTokens.length,
+                genWs: wsTokens.length,
+                genInstall: installTokens.length,
+                genSys: sysTokens.length,
+            },
+        };
     }
     // 已存在 → ① CompilationDatabase 归属修正 ② 管辖归正 + 缺失合并
     const original = text;
@@ -798,16 +860,20 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
         changes.push("CompilationDatabase 收编为 CompileFlags 子键");
     }
     let changed = dbMigrated;
+    const facts: Record<string, number> = {};
+    if (dbMigrated) {
+        facts.dbMigrated = 1;
+    }
     text = migrated;
     const parsed = parseClangdAddEntries(text);
     if (!parsed) {
         if (changed) {
             await writeFileAtomic(filename, text);
             log.info(`.clangd:已更新(${changes.join(";")};无 CompileFlags/Add 块,保守不代建 Add)`);
-        } else {
-            log.debug(".clangd:无变化,不写盘(无 CompileFlags/Add 块)");
+            return { file: "clangd", written: true, facts };
         }
-        return; // 无 CompileFlags/Add 块:只做 DB 归属修正(保守,不代建 Add)
+        log.debug(".clangd:无变化,不写盘(无 CompileFlags/Add 块)");
+        return { file: "clangd", written: false, facts: {}, idle: "conservative" }; // 无 CompileFlags/Add 块:只做 DB 归属修正(保守,不代建 Add)
     }
     const lines = text.split("\n");
     if (parsed.style === "block") {
@@ -816,8 +882,9 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
             if (changed) {
                 await writeFileAtomic(filename, text);
                 log.info(`.clangd:已更新(${changes.join(";")};无 Add 行,保守不处理)`);
+                return { file: "clangd", written: true, facts };
             }
-            return;
+            return { file: "clangd", written: false, facts: {}, idle: "conservative" };
         }
         let blockEnd = findAddBlockEnd(lines, addIdx + 1);
         // ---- 管辖内破坏性归正:旧形态/错位/重复/旧父子并列行移除(不整块重排,管辖外条目原地保留) ----
@@ -901,11 +968,13 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
         }
         if (removalIdx.length > 0) {
             changes.push(`管辖归正移除 ${removalIdx.length} 行(旧形态/重复行/残留 /usr/include/替换表空值·环·撞车)`);
+            facts.removed = removalIdx.length;
             changed = true;
             blockEnd = findAddBlockEnd(lines, addIdx + 1); // 行号已变,重算
         }
         if (ovReplaced > 0) {
             changes.push(`替换表原位收敛 ${ovReplaced} 行(链式至不动点)`);
+            facts.ovReplaced = ovReplaced;
             changed = true;
         }
         // ---- 接管排序(2026-10-14,ROS2.ide.clangdTidy 默认关):开 → tidy 重建整块(规范组序+重钉当前语言
@@ -918,6 +987,7 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
                 lines.length = 0;
                 lines.push(...tidied);
                 changes.push("接管排序:Add 块规范重排+分组注释重钉(用户行原序移尾)");
+                facts.tidy = 1;
                 changed = true;
             }
         } else {
@@ -931,6 +1001,7 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
                 lines.length = 0;
                 lines.push(...cleaned);
                 changes.push(`清理孤儿分组注释 ${removed} 行(布局切换/组被删空)`);
+                facts.orphan = removed;
                 changed = true;
                 blockEnd = findAddBlockEnd(lines, addIdx + 1);
             }
@@ -1000,8 +1071,13 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
             }
             if (hasMarkers) {
                 changes.push(`组内补缺失:标志 ${missingFlags.length}/工作空间 ${missingWs.length}/安装 ${missingInstall.length}/发行版 ${missingSys.length}`);
+                facts.addFlags = missingFlags.length;
+                facts.addWs = missingWs.length;
+                facts.addInstall = missingInstall.length;
+                facts.addSys = missingSys.length;
             } else {
                 changes.push(`无组注释旧文件,列表头补缺失 ${missingFlags.length + missingWs.length + missingInstall.length + missingSys.length} 条`);
+                facts.addFlat = missingFlags.length + missingWs.length + missingInstall.length + missingSys.length;
             }
             changed = true;
         }
@@ -1014,6 +1090,7 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
             if (closeIdx >= 0) {
                 lines.splice(closeIdx, 0, ...missing.map((e) => `    ${e},`));
                 changes.push(`flow 保守:"]"前补缺失 ${missing.length} 条`);
+                facts.flowAdded = missing.length;
                 changed = true;
             }
         }
@@ -1021,9 +1098,10 @@ async function syncClangdInner(workspaceRoot: string, groups: { ws: string[]; in
     if (changed) {
         await writeFileAtomic(filename, lines.join("\n"));
         log.info(`.clangd:已更新(${changes.join(";")})`);
-    } else {
-        log.debug(".clangd:无变化,不写盘");
+        return { file: "clangd", written: true, facts };
     }
+    log.debug(".clangd:无变化,不写盘");
+    return { file: "clangd", written: false, facts: {}, idle: "no-change" };
 }
 /* ================================================================== */
 /* 有感删除【预检】(2026-09-08):弹窗前检查条目是否真在配置里——用户可能删包时已自删条目, */

@@ -21,7 +21,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createRequire } from "module";
-import { installVscodeStub } from "./_vscode-stub";
+import { installVscodeStub, vscodeStubConfig } from "./_vscode-stub";
 
 // 必须在 require 被测模块之前安装 vscode stub(render 顶层 import vscode,无头环境不可解析)
 installVscodeStub();
@@ -944,6 +944,334 @@ describe("intellisense-config 渲染", () => {
         });
     });
 });
+
+describe("intellisense-config 域门控(编排层,2026-10-17)", () => {
+    // 公式(用户裁定):门槛(ROS 2 环境可用)绝对 && (门户(有包) || 倾向(ide.allowEmptyWorkspace,默认关))。
+    // 门关零增零删;skipped 附原因供手动命令反馈。
+    const configMod = req("../../src/build-tool/package-service/config/gen/intellisense-config") as any;
+
+    let tmpRoot: string;
+    let wsRoot: string;
+    let warnCalls: unknown[][];
+    let warnResponse: unknown;
+
+    beforeEach(() => {
+        tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "intellisense-gate-"));
+        wsRoot = path.join(tmpRoot, "ws");
+        fs.mkdirSync(wsRoot, { recursive: true });
+        vscodeStubConfig.reset();
+        // 引擎侧固定 both(绕开 vscode.extensions 探测,无头桩无此 API;集成宿主走 auto 等价)
+        if (HEADLESS) {
+            vscodeStubConfig.store["ide.intellisenseEngine"] = "both";
+            // 弹窗记录器(桩 window 只有 quickPick/inputBox;现挂警告捕获,防真实弹窗 + 断言弹与不弹)
+            warnCalls = [];
+            warnResponse = undefined;
+            (vsc.window as { showWarningMessage?: unknown }).showWarningMessage = async (...a: unknown[]) => {
+                warnCalls.push(a);
+                return warnResponse;
+            };
+        }
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    });
+
+    /** 可变环境桩:issue/env 可运行中翻转(模拟 source 完成),记录 onEnvChanged 订阅者 */
+    function makeEnv() {
+        const state = { issue: null as string | null, env: undefined as any };
+        const cbs: Array<() => void> = [];
+        return {
+            state,
+            source: {
+                getEnv: () => state.env,
+                getEnvIssue: () => state.issue,
+                onEnvChanged: (cb: () => void) => {
+                    cbs.push(cb);
+                    return { dispose: () => { const i = cbs.indexOf(cb); if (i >= 0) { cbs.splice(i, 1); } } };
+                },
+            },
+        };
+    }
+
+    interface GateFixture {
+        cfg: any;
+        env: ReturnType<typeof makeEnv>;
+        entries: { name: string; dir: string; buildType?: string }[];
+    }
+
+    /** 组装被测生成器:entries/envIssue 走可变持有者(用例中途翻转模拟扫描完成/环境上线) */
+    function makeGate(issue: string | null): GateFixture {
+        const env = makeEnv();
+        env.state.issue = issue;
+        const holder: GateFixture["entries"] = [];
+        const cfg = configMod.createIntellisenseConfig({
+            workspaceRoot: wsRoot,
+            getState: () => ({ unignored: holder, ignored: [] }),
+            environment: env.source,
+        });
+        return { cfg, env, entries: holder };
+    }
+
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    it("门槛绝对:环境不可用 + 有包 → 零写盘(增删皆无)", async function () {
+        const g = makeGate("environment not sourced (stub)");
+        g.entries.push({ name: "lll", dir: path.join(wsRoot, "src", "lll"), buildType: "ament_cmake" });
+        const outcome = await g.cfg.sync();
+        assert.deepStrictEqual(outcome, { outcome: "skipped", reason: "env" });
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".vscode", "c_cpp_properties.json")), false, "cpp 配置未写");
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".clangd")), false, ".clangd 未写");
+    });
+
+    it("引擎全关(ide.intellisenseEngine=none)→ cpp/clangd disabled;Python 归专属开关管,照写(2026-10-21 用户裁定:引擎只管 C++ 两侧)", async function () {
+        if (!HEADLESS) { this.skip(); } // 同上:python.* 键集成宿主不可写
+        vscodeStubConfig.store["ide.intellisenseEngine"] = "none";
+        const g = makeGate(null);
+        g.entries.push({ name: "lll", dir: path.join(wsRoot, "src", "lll"), buildType: "ament_cmake" });
+        const outcome = await g.cfg.sync();
+        assert.strictEqual(outcome.outcome, "applied");
+        assert.deepStrictEqual((outcome as { report: Array<{ file: string; written: boolean; idle?: string }> }).report.map((r) => ({ file: r.file, written: r.written, idle: r.idle })), [
+            { file: "cpp", written: false, idle: "disabled" },
+            { file: "clangd", written: false, idle: "disabled" },
+            { file: "python", written: true, idle: undefined },
+        ]);
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".vscode", "c_cpp_properties.json")), false, "cpp 零写盘");
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".clangd")), false, ".clangd 零写盘");
+        assert.ok(Array.isArray(vscodeStubConfig.store["python.autoComplete.extraPaths"]), "Python extraPaths 归专属开关,引擎 none 不牵连");
+        delete vscodeStubConfig.store["ide.intellisenseEngine"];
+    });
+
+    it("专属开关 ide.maintainPythonPaths=false → python idle=disabled 零写盘,cpp/clangd 不受牵连(2026-10-21 用户裁定:Python 另立设置)", async function () {
+        if (!HEADLESS) { this.skip(); }
+        vscodeStubConfig.store["ide.maintainPythonPaths"] = false;
+        const g = makeGate(null);
+        g.entries.push({ name: "lll", dir: path.join(wsRoot, "src", "lll"), buildType: "ament_cmake" });
+        const outcome = await g.cfg.sync();
+        assert.strictEqual(outcome.outcome, "applied");
+        assert.deepStrictEqual((outcome as { report: Array<{ file: string; written: boolean; idle?: string }> }).report.map((r) => ({ file: r.file, written: r.written, idle: r.idle })), [
+            { file: "cpp", written: true, idle: undefined },
+            { file: "clangd", written: true, idle: undefined },
+            { file: "python", written: false, idle: "disabled" },
+        ]);
+        assert.strictEqual(vscodeStubConfig.store["python.autoComplete.extraPaths"], undefined, "Python extraPaths 零写盘(专属开关关)");
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".vscode", "c_cpp_properties.json")), true, "cpp 照写(与 Python 开关互不牵连)");
+        delete vscodeStubConfig.store["ide.maintainPythonPaths"];
+    });
+
+    it("门开(环境可用 + 有包)→ applied 照写(现行为回归钉)", async function () {
+        if (!HEADLESS) { this.skip(); } // 全量 applyAdditions 含 python extraPaths 写入,集成宿主无 python.* 注册键必抛(同套件 python 用例先例)
+        const g = makeGate(null);
+        g.entries.push({ name: "lll", dir: path.join(wsRoot, "src", "lll"), buildType: "ament_cmake" });
+        const outcome = await g.cfg.sync();
+        assert.strictEqual(outcome.outcome, "applied");
+        // 2026-10-20 动态反馈:applied 携带逐文件明细(cpp/clangd/python 三侧全写盘)
+        assert.deepStrictEqual((outcome as { report: Array<{ file: string; written: boolean }> }).report.map((r) => ({ file: r.file, written: r.written })), [
+            { file: "cpp", written: true },
+            { file: "clangd", written: true },
+            { file: "python", written: true },
+        ]);
+        const cppPath = path.join(wsRoot, ".vscode", "c_cpp_properties.json");
+        assert.strictEqual(fs.existsSync(cppPath), true, "cpp 配置已生成");
+        const raw = JSON.parse(fs.readFileSync(cppPath, "utf8"));
+        assert.strictEqual(raw.configurations[0].name, "ros2");
+        // 2 条 = 源码 include + 静态安装模板(install/<pkg>/include/<pkg>,无条件收录不做存在性检测)
+        assert.strictEqual(raw.configurations[0].includePath.length, 2, "源码 + 安装模板各 1 条");
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".clangd")), true, ".clangd 已生成");
+    });
+
+    it("门户关:环境可用 + 零包 + 倾向默认关 → skipped(packages) 零写盘", async function () {
+        const g = makeGate(null);
+        const outcome = await g.cfg.sync();
+        assert.deepStrictEqual(outcome, { outcome: "skipped", reason: "packages" });
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".vscode", "c_cpp_properties.json")), false);
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".clangd")), false);
+    });
+
+    it("倾向豁免门户:环境可用 + 零包 + env.allowEmptyWorkspace=true → applied 写环境侧", async function () {
+        if (!HEADLESS) { this.skip(); } // 倾向播种走无头桩配置仓,集成宿主不可播种
+        // 2026-10-18(P1 倾向键合一):播种键随统一键更名 env.allowEmptyWorkspace
+        vscodeStubConfig.store["env.allowEmptyWorkspace"] = true;
+        const g = makeGate(null);
+        const outcome = await g.cfg.sync();
+        assert.strictEqual(outcome.outcome, "applied");
+        // 2026-10-20:零包时 cpp/clangd 照写(环境侧),python 无可维护路径 → idle=empty
+        assert.deepStrictEqual((outcome as { report: Array<{ file: string; written: boolean }> }).report.map((r) => ({ file: r.file, written: r.written })), [
+            { file: "cpp", written: true },
+            { file: "clangd", written: true },
+            { file: "python", written: false },
+        ]);
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".vscode", "c_cpp_properties.json")), true, "cpp 配置已生成(环境侧口径,零包时 includePath 可为空)");
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".clangd")), true, ".clangd 已生成");
+    });
+
+    it("事件恢复:门关(零包)→ 0→1 包事件,防抖后写出", async function () {
+        if (!HEADLESS) { this.skip(); } // 写出链含 python extraPaths(集成宿主必抛,防抖路径吞成未处理拒绝)——同上守卫
+        this.timeout(5000);
+        const g = makeGate(null);
+        let emit: ((ev: any) => void) | undefined;
+        g.cfg.subscribe((handler: (ev: any) => void) => {
+            emit = handler; // 存下模块的事件处理器,用例直接调用 = 模拟 packageCore 发事件
+            return () => undefined;
+        });
+        // 门关基线:零包 sync 被拦
+        assert.deepStrictEqual(await g.cfg.sync(), { outcome: "skipped", reason: "packages" });
+        // 包到达(模拟首扫完成):事件带新值 + 空 old(冷启动首载,无删除候选)
+        g.entries.push({ name: "lll", dir: path.join(wsRoot, "src", "lll"), buildType: "ament_cmake" });
+        emit!({ workspace: [...g.entries], oldWorkspace: [] });
+        await sleep(1000); // 防抖 800ms + 余量
+        assert.strictEqual(fs.existsSync(path.join(wsRoot, ".vscode", "c_cpp_properties.json")), true, "门自动开,事件驱动写出");
+    });
+
+    it("skipped 两原因返回值断言(env / packages)", async function () {
+        const gated = makeGate("no distro (stub)");
+        assert.deepStrictEqual(await gated.cfg.sync(), { outcome: "skipped", reason: "env" });
+        const empty = makeGate(null);
+        assert.deepStrictEqual(await empty.cfg.sync(), { outcome: "skipped", reason: "packages" });
+    });
+
+    it("门关时候选保留不弹窗;门开后延迟处理(延迟不丢失)", async function () {
+        if (!HEADLESS) { this.skip(); } // 断言"不弹窗"依赖桩 window 记录器,集成宿主会弹真窗
+        this.timeout(5000);
+        const cppPath = path.join(wsRoot, ".vscode", "c_cpp_properties.json");
+        // 预置:包 A 的条目已在配置里(此前门开时代写出)
+        fs.mkdirSync(path.join(wsRoot, ".vscode"), { recursive: true });
+        const pkgA = { name: "aaa", dir: path.join(wsRoot, "src", "aaa"), buildType: "ament_cmake" };
+        await render.syncCppProperties(wsRoot, [utils.absIncludeForPkg(pkgA.dir)]);
+        // 门关 + 包 A 消失事件:候选累计,防抖后被门槛拦下 → 零弹窗零删除
+        // (保留包 B 在工作区:门户保持开,最终阶段延迟处理才可达——零包+倾向默认关时门会再关,公式使然)
+        const pkgB = { name: "bbb", dir: path.join(wsRoot, "src", "bbb"), buildType: "ament_cmake" };
+        const g = makeGate("environment not sourced (stub)");
+        g.entries.push(pkgA, pkgB);
+        let emit: ((ev: any) => void) | undefined;
+        g.cfg.subscribe((handler: (ev: any) => void) => {
+            emit = handler;
+            return () => undefined;
+        });
+        g.entries.length = 0;
+        g.entries.push(pkgB); // 新扫描快照:A 消失,B 仍在
+        emit!({ workspace: [pkgB], oldWorkspace: [pkgA, pkgB] });
+        await sleep(1000);
+        assert.strictEqual(warnCalls.length, 0, "门槛关:不弹删除确认窗");
+        assert.strictEqual(fs.existsSync(cppPath), true);
+        assert.ok(fs.readFileSync(cppPath, "utf8").includes("aaa"), "条目保留(零增零删含不删)");
+        // 门开(环境上线)→ 手动 sync:候选延迟处理,弹窗出现;默认保留(超时/拒绝语义)
+        g.env.state.issue = null;
+        warnResponse = undefined; // 无选择 = 超时默认保留
+        await g.cfg.sync();
+        assert.strictEqual(warnCalls.length, 1, "门开:消失候选延迟补弹(不丢失)");
+        assert.ok(fs.readFileSync(cppPath, "utf8").includes("aaa"), "弹窗默认保留,条目仍在");
+    });
+});
+describe("配置生成动态反馈报表(2026-10-20):SyncFileReport 逐文件明细 + 话术渲染", () => {
+    let tmpRoot: string;
+    let wsRoot: string;
+    const reportMod = req("../../src/build-tool/package-service/config/gen/intellisense-report") as any;
+
+    beforeEach(() => {
+        tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "intellisense-report-test-"));
+        wsRoot = path.join(tmpRoot, "ws");
+        fs.mkdirSync(path.join(wsRoot, "src", "lll", "include"), { recursive: true });
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    });
+
+    it("cpp 报表:文件不存在 → 从零生成(written,generated=N);已规范重跑 → 零写盘 idle=no-change", async () => {
+        const inc = path.join(wsRoot, "src", "lll", "include");
+        const r1 = await render.syncCppProperties(wsRoot, [inc]);
+        assert.strictEqual(r1.file, "cpp");
+        assert.strictEqual(r1.written, true);
+        assert.strictEqual(r1.facts.generated, 1, JSON.stringify(r1.facts));
+        const r2 = await render.syncCppProperties(wsRoot, [inc]);
+        assert.strictEqual(r2.written, false, JSON.stringify(r2));
+        assert.strictEqual(r2.idle, "no-change");
+    });
+
+    it("cpp 报表:includePath 键缺失 → 外科补(surgical=N);混入 /usr/include 残留 → 重排+usrClean 计数", async () => {
+        const cppPath = path.join(wsRoot, ".vscode", "c_cpp_properties.json");
+        fs.mkdirSync(path.join(wsRoot, ".vscode"), { recursive: true });
+        fs.writeFileSync(cppPath, JSON.stringify({
+            configurations: [{ name: "ros2", cppStandard: "gnu++17" }],
+            version: 4,
+        }));
+        const r = await render.syncCppProperties(wsRoot, [path.join(wsRoot, "src", "lll", "include")]);
+        assert.strictEqual(r.written, true, JSON.stringify(r));
+        assert.strictEqual(r.facts.surgical, 1, JSON.stringify(r.facts));
+        assert.strictEqual(r.facts.claimed, undefined, "ros2 成员已在,无认领变更");
+        fs.writeFileSync(cppPath, JSON.stringify({
+            configurations: [{
+                name: "ros2",
+                includePath: ["/usr/include/**", utils.toCppIncludeEntry(path.join(wsRoot, "src", "lll", "include"), wsRoot)],
+            }],
+            version: 4,
+        }));
+        const r2 = await render.syncCppProperties(wsRoot, [path.join(wsRoot, "src", "lll", "include")]);
+        assert.strictEqual(r2.written, true, JSON.stringify(r2));
+        assert.strictEqual(r2.facts.reorder, 1, JSON.stringify(r2.facts));
+        assert.strictEqual(r2.facts.usrClean, 1, JSON.stringify(r2.facts));
+    });
+
+    it("clangd 报表:文件不存在 → 生成(四组计数);已规范重跑零写盘;无 Add 块 → idle=conservative", async () => {
+        const groups = { ws: [path.join(wsRoot, "src", "lll", "include")], sys: [] };
+        const r1 = await render.syncClangd(wsRoot, groups);
+        assert.strictEqual(r1.file, "clangd");
+        assert.strictEqual(r1.written, true, JSON.stringify(r1));
+        assert.strictEqual(r1.facts.generated, 1, JSON.stringify(r1.facts));
+        assert.strictEqual(r1.facts.genWs, 1, JSON.stringify(r1.facts));
+        assert.strictEqual(r1.facts.genFlags, (utils as any).CLANGD_FLAG_ENTRIES.length, JSON.stringify(r1.facts));
+        const r2 = await render.syncClangd(wsRoot, groups);
+        assert.strictEqual(r2.written, false, JSON.stringify(r2));
+        assert.strictEqual(r2.idle, "no-change");
+        fs.writeFileSync(path.join(wsRoot, ".clangd"), "CompileFlags:\n  CompilationDatabase: build\n");
+        const r3 = await render.syncClangd(wsRoot, groups);
+        assert.strictEqual(r3.written, false, JSON.stringify(r3));
+        assert.strictEqual(r3.idle, "conservative", "无 CompileFlags/Add 块,保守不代建(#4 尾巴的事实化)");
+    });
+
+    it("python 报表:空集 → idle=empty;有包补充 → written(rewritten/added);已规范重跑 → 零写盘", async function () {
+        if (!HEADLESS) { this.skip(); return; } // 集成宿主 python.* 键不可写
+        const cfg = vsc.workspace.getConfiguration();
+        await cfg.update("python.autoComplete.extraPaths", []);
+        await cfg.update("python.analysis.extraPaths", []);
+        const r1 = await render.syncPythonPaths(wsRoot, [], [], "isolated");
+        assert.strictEqual(r1.file, "python");
+        assert.strictEqual(r1.written, false, JSON.stringify(r1));
+        assert.strictEqual(r1.idle, "empty");
+        const pkgs = [{ name: "lll", dir: path.join(wsRoot, "src", "lll"), buildType: "ament_python" }];
+        const r2 = await render.syncPythonPaths(wsRoot, pkgs, [], "isolated");
+        assert.strictEqual(r2.written, true, JSON.stringify(r2));
+        assert.ok((r2.facts.rewritten ?? 0) >= 1 && (r2.facts.added ?? 0) >= 1, JSON.stringify(r2.facts));
+        const r3 = await render.syncPythonPaths(wsRoot, pkgs, [], "isolated");
+        assert.strictEqual(r3.written, false, JSON.stringify(r3));
+        assert.strictEqual(r3.idle, "no-change");
+    });
+
+    it("报表话术:有写盘 → 更新 headline+逐文件行;全 idle → 检查 headline+原因行(引擎关/保守/空集可辨)", () => {
+        const updated = reportMod.renderSyncReportMessage([
+            { file: "cpp", written: true, facts: { surgical: 12, usrClean: 1 } },
+            { file: "clangd", written: false, facts: {}, idle: "conservative" },
+            { file: "python", written: false, facts: {}, idle: "no-change" },
+        ]);
+        const lines = updated.split("\n");
+        assert.strictEqual(lines.length, 4, updated);
+        assert.ok(/updated/i.test(lines[0]), updated);
+        assert.strictEqual(lines[1].indexOf("c_cpp_properties.json"), 0, updated);
+        assert.ok(/12/.test(lines[1]) && /1/.test(lines[1]), updated);
+        assert.strictEqual(lines[2].indexOf(".clangd"), 0, updated);
+        assert.ok(/conservatively/i.test(lines[2]), updated);
+        assert.ok(/canonical/i.test(lines[3]), updated);
+        const checked = reportMod.renderSyncReportMessage([
+            { file: "cpp", written: false, facts: {}, idle: "no-change" },
+            { file: "clangd", written: false, facts: {}, idle: "disabled" },
+            { file: "python", written: false, facts: {}, idle: "empty" },
+        ]);
+        assert.ok(/checked/i.test(checked.split("\n")[0]), checked);
+        assert.ok(/disabled/i.test(checked), checked);
+        assert.ok(/no Python paths/i.test(checked), checked);
+    });
+});
 // 修改时间:2026-09-08 22:53(+1 用例:有感删除预检三函数 24→25;渲染组删空/多事件循环等语义不变)
 // 修改时间:2026-09-09 01:43(+2 用例 25→27:orderPythonExtraPaths 规范组序 / syncPythonPaths 已有列表整块规范重排)
 // 修改时间:2026-09-09 01:52(重排仅管辖条目:用户自加条目原序留队尾、只改队尾不重写,断言并入 syncPythonPaths 用例)
@@ -962,3 +1290,6 @@ describe("intellisense-config 渲染", () => {
 // 重复 ros2 清理保留最前/成员内删 includePath 键外科补字段 browse·键序保留/JSONC 宽容解析注释丢失/彻底报废从零生成)
 // 修改时间:2026-10-14(标准字段收缩:5 处断言改写——首次生成三键形状/已存在 gnu++17 保留+compileCommands 不补/用户 cppStandard 永不触碰含 gnu++17/鲁棒化接管保留 gnu++17/报废重建三键形状;例数不变)
 // 修改时间:2026-10-15(测试假绿根治:render 组整组 before-skip 拆除——stub 旗标集成宿主不置致套件空壳(tests=37/零 testcase/time=0.000)被误读为全过,本会话 render 层四批用例实际未跑;cpp/clangd 用例双宿主真跑,python 依赖 5 用例逐例守卫(HEADLESS 旗标);tidy 用例 body 改 token 视图修 indexOf 撞位;JSONC 用例改 stale includePath 制造真实变更;npm test render 31 实跑 0 失败)
+// 修改时间:2026-10-20(+5 用例:配置生成动态反馈报表 SyncFileReport——cpp 从零生成/外科补/重排清残留计数、
+// clangd 生成四组计数/已规范零写盘/无 Add 块 conservative(#4 尾巴事实化)、python 空集 empty/补充 rewritten+added/
+// 已规范零写盘(HEADLESS 守卫)、话术渲染器两 headline 形态(更新/已检查)+idle 原因行可辨)

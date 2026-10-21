@@ -19,11 +19,20 @@ import { getLogger } from "../../logger";
 /** 环境状态模块日志 */
 const log = getLogger("status");
 
+/** 上次输出校验日志时的可用性(null=尚未输出过;P2:传感器统一后本函数每轮刷新都会被调,仅翻转/首次输出防刷屏) */
+let lastLoggedUsable: boolean | null = null;
+
 /**
- * 打印 ROS 环境校验日志(发行版匹配 + 版本报告),仅在 activateEnvironment 调用一次,避免刷屏。
- * 发行版是固定字符串,可对照已知 ROS 2 发行版列表匹配,结果写入扩展日志。
+ * 打印 ROS 环境校验日志(发行版匹配 + 版本报告)。
+ * 2026-08-31:仅在 activateEnvironment 调用一次,避免刷屏;
+ * 2026-10-18(P2):传感器统一后 60s 轮询也走全量刷新路径,改为**仅可用性翻转/首次**输出。
  */
 export function logRosEnvironmentStatus(): void {
+    const usable = state.getEnvIssue() === null;
+    if (lastLoggedUsable === usable) {
+        return;
+    }
+    lastLoggedUsable = usable;
     const env = state.getEnv();
     if (!env) {
         log.warn(l10n.t("Environment check: no ROS environment detected; ROS 2 features will be limited. Install ROS 2 or configure the ROS environment setup script."));
@@ -63,8 +72,9 @@ export async function updateWorkspaceContextKeys(): Promise<void> {
     await setContext("ros2.hasRosEnvironment", hasRosEnvironment);
     log.debug(l10n.t("Context key: hasRosEnvironment={0}", hasRosEnvironment));
 
-    // 空构建倾向(ROS2.build.allowEmptyWorkspace)——无包时是否允许空构建,参与 Ctrl+Shift+B 快捷键门控
-    const allowEmptyWorkspace = getConfig("build.allowEmptyWorkspace", true);
+    // 空工作区倾向(ROS2.env.allowEmptyWorkspace,2026-10-18 P1 自 build 键合一,默认关)——
+    // 无包时是否放行,参与 Ctrl+Shift+B 快捷键门控;context key 沿用 ros2.allowEmptyWorkspace 原名
+    const allowEmptyWorkspace = getConfig("env.allowEmptyWorkspace", false);
     await setContext("ros2.allowEmptyWorkspace", allowEmptyWorkspace);
     log.debug(l10n.t("Context key: allowEmptyWorkspace={0}", allowEmptyWorkspace));
 }

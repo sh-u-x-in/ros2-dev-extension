@@ -10,6 +10,8 @@
 
 | 文件 | 层 | 职责 / 导出 |
 |:--|:--|:--|
+| 2026-10-18 (P2) | **start 化**:providers 删两处立即 `pkg.initialize()`;注册返回 `{disposables, start}`(enabled 谓词门关空转;start=ensureInitialized→诊断 reanalyzeAll);诊断 analyzeOne+初始扫描+scheduleDiagReanalyze 挂 isStarted 门;新增打开 launch 文件惰性启动;入口=编排层 reconcile + 首次打开文件 |
+| 2026-10-18 16:13 | yaml 定义注册开关键迁 `tool.` 层:`ROS2.launch.yamlDefinitionEnabled`→`ROS2.tool.launch.yamlDefinitionEnabled`(读取口 readYamlDefinitionEnabled 的 getConfiguration 节串随改;providers.ts 注释同步;行为零改动) |
 | providers.ts | 根 | 注册入口 registerLaunchProviders(packages?):共享 PackageMap 复用 + py/XML/YAML include 链接 + 三格式补全/解析跳转/悬浮统一注册(LA-1/2/3、LD-3/LD-5) |
 | core/launch-completion-core.ts | core | 补全纯核心(零 vscode,1147 行):结构片段目录(py 14 条/XML/yaml)+ 三格式光标上下文(pyAttrContextAt/xmlCursorAt/yamlCursorAt 等)+ 候选生成;LC-2/3 尾段 $() 判定(substCommandPrefixAt/varArgTypedWordAt,LD-2 值中后续 $() 亦识别);LC-6 kwargs 目录;PY_ATTR_TAIL_RE(LD-2 收编 output/respawn) |
 | core/launch-args.ts | core | 参数声明提取(LC-1,215 行):三格式统一 LaunchArgDecl{name, default?, declOffset, declLineText}——py DeclareLaunchArgument 掩码扫描 / xml `<arg>` lezer / yaml `- arg:` 块;declLineText 供悬浮(LD-5 首消费方) |

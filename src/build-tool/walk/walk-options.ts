@@ -16,7 +16,7 @@
 
 import * as vscode from "vscode";
 import { getWalkTimeoutConfig } from "./base/walk-config";
-import type { WalkSearchType, WalkTimeoutOverride } from "./base/walk-config";
+import type { WalkSearchType, WalkTimeoutConfig } from "./base/walk-config";
 import { WALK_FOLLOW_SYMLINKS_DEFAULT } from "./base/walk-utils";
 import { DEFAULT_EXCLUDED_DIR_NAMES } from "./base/excluded-paths";
 import type { WalkOptions } from "./base/ts-walk";
@@ -26,9 +26,28 @@ function readFollowSymlinksSetting(): boolean {
     return vscode.workspace.getConfiguration("ROS2").get<boolean>("search.followSymlinks", WALK_FOLLOW_SYMLINKS_DEFAULT) === true;
 }
 
-/** 读超时/深度覆盖(ROS2.search.walkTimeouts,原始数组,由 walk-config 合并默认) */
-function readWalkTimeoutOverrides(): WalkTimeoutOverride[] {
-    return vscode.workspace.getConfiguration("ROS2").get<WalkTimeoutOverride[]>("search.walkTimeouts", []);
+/** 各字段的下限(2026-10-18 平铺批:总/分支超时禁 0——0 = 立即超时 footgun;深度 0 = 仅根目录,合法) */
+const FIELD_MINIMUMS: Record<keyof WalkTimeoutConfig, number> = { totalTimeoutMs: 1, branchTimeoutMs: 1, maxDepth: 0 };
+
+/**
+ * 读某类搜索的超时/深度配置(2026-10-18 平铺批,自 vscode-utils 迁入以兑现"读设置仅此处一处"):
+ * 12 键 `ROS2.search.walkTimeout.<type>.<field>` 逐字段现读,非法(非有限数/低于下限)回落内置默认
+ * (walk-config profiles 表,亦即 manifest default 同源值);设置变化即时生效(每次现读,无缓存)。
+ * 消费方:walkOptions(本文件)+ package-core 链(extension.ts 经此导入)。
+ */
+export function readWalkTimeoutConfig(type: WalkSearchType): WalkTimeoutConfig {
+    const def = getWalkTimeoutConfig(type);
+    const cfg = vscode.workspace.getConfiguration("ROS2");
+    const field = (name: keyof WalkTimeoutConfig): number => {
+        const raw = cfg.get<unknown>(`search.walkTimeout.${type}.${name}`);
+        const minimum = FIELD_MINIMUMS[name];
+        return typeof raw === "number" && Number.isFinite(raw) && raw >= minimum ? raw : def[name];
+    };
+    return {
+        totalTimeoutMs: field("totalTimeoutMs"),
+        branchTimeoutMs: field("branchTimeoutMs"),
+        maxDepth: field("maxDepth"),
+    };
 }
 
 /** walkOptions 的调用方叠加项(全部可选:当前调用方无额外需求时可不传) */
@@ -43,11 +62,11 @@ export interface WalkOptionsExtra {
  * 统一入口:读设置(一处) + 基础排除(内置产物目录) + 叠加调用方额外排除,
  * 返回 walkWithTimeout 需要的完整 WalkOptions。调用方无需自行读取任何设置。
  *
- * @param type  搜索类型(walk-config 按类型分组的超时/深度配置:"default"|"message"|"test"|"xacro"|"package")
+ * @param type  搜索类型(walk-config 按类型分组的超时/深度配置;default 仅内部兜底,无设置键)
  * @param extra 调用方额外隔离的部分(可选;当前无调用方需要传)
  */
 export function walkOptions(type: WalkSearchType, extra?: WalkOptionsExtra): WalkOptions {
-    const cfg = getWalkTimeoutConfig(type, readWalkTimeoutOverrides());
+    const cfg = readWalkTimeoutConfig(type);
     return {
         branchTimeoutMs: cfg.branchTimeoutMs,
         totalTimeoutMs: cfg.totalTimeoutMs,

@@ -7,8 +7,9 @@
  * 无头可跑:`npm run test-compile && npx mocha out/test/suite/share-spec.test.js`
  * 被测模块依赖 vscode(读设置 + resolveInstallType)→ 先装 stub,并用 `vscodeStubConfig` 播种设置项。
  *
- * 重点:① 设置项缺失 ⇒ 整份出厂默认;② **显式给空数组不复原默认**(预设可全删);③ 模板是唯一来源
+ * 重点:① 设置项缺失 ⇒ 整份出厂默认;② **显式给空 presets(空对象)不复原默认**(预设可全删);③ 模板是唯一来源
  * (模板里没写的变量不出现,例如 `${clean}` 不在模板里 ⇒ clean 参数不出现);④ 空模板 ⇒ empty。
+ * 2026-10-17 两拆分:播种键由 shareSpec 对象改为 `build.template`(string)+ `build.presets`(键值表)。
  */
 
 import * as assert from 'assert';
@@ -22,7 +23,8 @@ installVscodeStub();
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const shareSpec = require('../../src/build-tool/package-service/build/share-spec') as typeof import('../../src/build-tool/package-service/build/share-spec');
 
-const KEY = 'build.shareSpec';
+const KEY = 'build.template';
+const PRESETS_KEY = 'build.presets';
 
 /** 每个用例前清空设置播种,并把两轴钉死成"实体 + 分包"(平台无关,便于断言) */
 function resetSettings(): void {
@@ -57,21 +59,22 @@ describe('share-spec:设置 → spec(合并出厂默认)', function () {
     });
 
     it('只给 template → 其余字段回落出厂默认', () => {
-        vscodeStubConfig.store[KEY] = { template: 'colcon build --base-paths ${base_path}' };
+        vscodeStubConfig.store[KEY] = 'colcon build --base-paths ${base_path}';
         const spec = shareSpec.readColconBuildSpec();
         assert.strictEqual(spec.template, 'colcon build --base-paths ${base_path}');
-        assert.deepStrictEqual(spec.argv_list, COLCON_BUILD_SPEC.argv_list, 'argv_list 未给 ⇒ 用默认');
+        assert.deepStrictEqual(spec.argv_list, COLCON_BUILD_SPEC.argv_list, 'presets 未给 ⇒ 用默认');
         assert.strictEqual(spec.custom, COLCON_BUILD_SPEC.custom);
     });
 
-    it('**显式给空 argv_list → 保持空**(预设可全删,不得被默认悄悄还原)', () => {
-        vscodeStubConfig.store[KEY] = { template: 'colcon build', argv_list: [] };
+    it('**显式给空 presets(空对象)→ 保持空**(预设可全删,不得被默认悄悄还原)', () => {
+        vscodeStubConfig.store[KEY] = 'colcon build';
+        vscodeStubConfig.store[PRESETS_KEY] = {};
         const spec = shareSpec.readColconBuildSpec();
         assert.deepStrictEqual(spec.argv_list, []);
     });
 
     it('显式给空串 template → 尊重用户(展开为空,而不是回落默认模板)', () => {
-        vscodeStubConfig.store[KEY] = { template: '' };
+        vscodeStubConfig.store[KEY] = '';
         const r = shareSpec.expandColconBuild({ base_path: '/tmp/ws' });
         assert.strictEqual(r.empty, true);
         assert.deepStrictEqual(r.argv, []);
@@ -85,11 +88,10 @@ describe('share-spec:展开成 argv(模板是唯一来源)', function () {
 
     beforeEach(resetSettings);
 
-    it('默认模板 + 两包 + clean:argv 与内置构造逐字节一致', () => {
+    it('默认模板 + 两包 + clean:argv 与出厂定版形态逐字节一致(不勾预设 ⇒ 无 --event-handlers)', () => {
         const r = shareSpec.expandColconBuild({ base_path: '/tmp/ws', packages: ['a', 'b'], clean: true });
         assert.deepStrictEqual(r.argv, [
             'colcon', 'build',
-            '--event-handlers', 'console_cohesion+',
             '--base-paths', '/tmp/ws',
             '--packages-select', 'a', 'b',
             '--cmake-clean-cache',
@@ -98,31 +100,23 @@ describe('share-spec:展开成 argv(模板是唯一来源)', function () {
         assert.deepStrictEqual(r.unknown, []);
     });
 
-    it('两轴来自设置:开符号 + 合并 → 两个 flag 都出现(与前瞻检查同源)', () => {
+    it('两轴来自设置:显式 symlink + merged → 两个 flag 都出现(2026-09-29 三值化政策:显式选择优先于平台,两平台同断言)', () => {
         vscodeStubConfig.store['build.installMethod'] = 'symlink';
         vscodeStubConfig.store['build.installLayout'] = 'merged';
         const argv = shareSpec.expandColconBuild({ base_path: '/ws' }).argv;
-        if (process.platform === 'win32') {
-            assert.ok(!argv.includes('--symlink-install'), 'Windows 恒实体:设置不得生效');
-            assert.ok(argv.includes('--merge-install'));
-        } else {
-            assert.ok(argv.includes('--symlink-install'));
-            assert.ok(argv.includes('--merge-install'));
-        }
+        assert.ok(argv.includes('--symlink-install'), '显式 symlink 优先于平台默认(旧断言"Windows 恒实体"是三值化前的陈旧口径,集成宿主播种失效下才一直假绿)');
+        assert.ok(argv.includes('--merge-install'));
     });
 
     it('模板里没写的变量不出现:模板不含 ${clean} ⇒ clean 参数不出现', () => {
-        vscodeStubConfig.store[KEY] = { template: 'colcon build --base-paths ${base_path} ${packages_select}' };
+        vscodeStubConfig.store[KEY] = 'colcon build --base-paths ${base_path} ${packages_select}';
         const argv = shareSpec.expandColconBuild({ base_path: '/ws', packages: ['a'], clean: true }).argv;
         assert.deepStrictEqual(argv, ['colcon', 'build', '--base-paths', '/ws', '--packages-select', 'a']);
     });
 
-    it('用户模板里的 ${0} 与预设槽:勾选 + 自定义输入都生效', () => {
-        vscodeStubConfig.store[KEY] = {
-            template: 'colcon build --base-paths ${base_path} ${packages_select} ${1} ${0}',
-            custom: 'C',
-            argv_list: [{ argv: '--continue-on-error', describe: 'd' }],
-        };
+    it('用户模板里的 ${0} 与预设槽:勾选 + 自定义输入都生效(键值表供给槽位与 0 描述)', () => {
+        vscodeStubConfig.store[KEY] = 'colcon build --base-paths ${base_path} ${packages_select} ${1} ${0}';
+        vscodeStubConfig.store[PRESETS_KEY] = { '0|C': '', '1|d': '--continue-on-error' };
         const argv = shareSpec.expandColconBuild({
             base_path: '/tmp/ws', packages: ['a', 'b'], picked: [0], custom: '--force',
         }).argv;
@@ -134,7 +128,7 @@ describe('share-spec:展开成 argv(模板是唯一来源)', function () {
     });
 
     it('未知占位符原样保留(不静默剔除),记入 unknown', () => {
-        vscodeStubConfig.store[KEY] = { template: 'colcon build --base-paths ${basepath}' };
+        vscodeStubConfig.store[KEY] = 'colcon build --base-paths ${basepath}';
         const r = shareSpec.expandColconBuild({ base_path: '/ws' });
         assert.deepStrictEqual(r.argv, ['colcon', 'build', '--base-paths', '${basepath}']);
         assert.deepStrictEqual(r.unknown, ['basepath']);

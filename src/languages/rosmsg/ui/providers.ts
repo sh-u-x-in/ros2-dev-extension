@@ -512,12 +512,18 @@ export class RosMessageFormatter implements vscode.DocumentFormattingEditProvide
  * 注册 ROS 消息语言提供器
  * @param packages 可选共享 PackageMap(2026-09-03:组合根传 xacroPackages 共享实例——定义/悬停/链接
  *   兜底的系统包目录经 resolvePackageDir 懒取(单飞 + 缓存),语言域不再各自调 pkg_list/pkg_prefix)
+ * @param enabled 环境门谓词(P2 start 化:门关时 start() 空转不建索引;门开由编排层显式 start 补建)
+ * @returns disposables + start()(幂等;编排层在门开后调用;门关时空转)
  */
-export function registerRosMessageProviders(context: vscode.ExtensionContext, packages?: PackageMap): vscode.Disposable[] {
+export function registerRosMessageProviders(
+    context: vscode.ExtensionContext,
+    packages?: PackageMap,
+    enabled?: () => boolean
+): { disposables: vscode.Disposable[]; start(): Promise<void> } {
     sharedPackageMap = packages;
     const selector: vscode.DocumentSelector = { language: 'rosmsg', scheme: 'file' };
 
-    // 读取系统消息索引刷新间隔(分钟,配置项)
+    // 读取系统消息索引刷新间隔(分钟,配置项;纯值读取无副作用)
     const refreshMinutes = vscode.workspace
         .getConfiguration("ROS2")
         .get<number>("msg.systemRefreshMinutes", 10);
@@ -527,23 +533,49 @@ export function registerRosMessageProviders(context: vscode.ExtensionContext, pa
     // envAvailable = 共享 PackageMap 的系统名单就绪判定(core.system 域已刷新),替代直连 ros2 getEnvIssue(2026-09-04);
     // packages 注入 = 包表来源(PackageSource:R1 快照 / R2 就绪 / R3 原子事件,rosmsg-v3.md §7.4)
     const index = new MessageIndex(context, refreshMs, packages ? () => packages.systemAvailable : undefined, packages);
-    void index.initialize();
-    // 节流(rosmsg-v3.md §7.2):启动取一次基线不开定时器;首次打开 .msg 才开启兜底重扫;关窗冻结(计时不归零)
+
+    // P2 start 化:构造/注册零后台活动。start = index.initialize 单飞(修历史双 initialize:
+    // 二次 walk + 订阅覆盖泄漏 + 双份 interface list)→ reanalyzeAll 清过期警告 → 兜底定时器按当前打开面 arm。
+    // 门关(enabled()=false)空转返回;入口=编排层 reconcile + 首次打开 rosmsg 文档。
+    let startPromise: Promise<void> | undefined;
+    const isStarted = (): boolean => startPromise !== undefined;
+    const start = (): Promise<void> => {
+        if (startPromise) {
+            return startPromise;
+        }
+        if (enabled && !enabled()) {
+            return Promise.resolve(); // 门关:不启动,下次入口(reconcile/打开文档)再判
+        }
+        startPromise = index.initialize().then(() => {
+            diagnostics.reanalyzeAll();
+            updateRescanActive();
+        });
+        return startPromise;
+    };
+
+    // 节流(rosmsg-v3.md §7.2):启动后按当前打开面开/关兜底重扫定时器;未启动不 arm(门关零后台)
     const updateRescanActive = (): void => {
+        if (!isStarted()) {
+            return;
+        }
         const active = vscode.workspace.textDocuments.some(
             (d) => d.languageId === "rosmsg" && d.uri.scheme === "file"
         );
         index.setRescanActive(active);
     };
-    const openDocListener = vscode.workspace.onDidOpenTextDocument(updateRescanActive);
+    const openDocListener = vscode.workspace.onDidOpenTextDocument((doc) => {
+        if (doc.languageId === "rosmsg" && doc.uri.scheme === "file") {
+            void start().then(() => updateRescanActive());
+            return;
+        }
+        updateRescanActive();
+    });
     const closeDocListener = vscode.workspace.onDidCloseTextDocument(updateRescanActive);
-    updateRescanActive(); // 初始:激活时可能已有 rosmsg 文档打开
 
     // 语义诊断(RE-1 接电):packages 注入供三级判定的 FS 点查;reanalyzeAll 挂两处——
-    // ① index.initialize() 就绪后(清除"打开瞬间索引未就绪"的过期未知类型警告);
+    // ① start 完成后(清除"打开瞬间索引未就绪"的过期未知类型警告);
     // ② 系统刷新事件链(下方 systemRefreshListener,防抖 1s)
-    const diagnostics = registerRosMessageDiagnostics(context, index, packages);
-    void index.initialize().then(() => diagnostics.reanalyzeAll());
+    const diagnostics = registerRosMessageDiagnostics(context, index, packages, isStarted);
     let reanalyzeTimer: NodeJS.Timeout | undefined;
     const scheduleReanalyze = (): void => {
         if (reanalyzeTimer) {
@@ -582,6 +614,9 @@ export function registerRosMessageProviders(context: vscode.ExtensionContext, pa
     // 无共享实例(独立/测试)时退回订阅 core.onDidChange(ev.system),仍不碰 ros2/api。
     const systemRefreshListener: vscode.Disposable = packages
         ? packages.onSystemListChanged(() => {
+            if (!isStarted()) {
+                return; // P2:索引未启动不做任何后台活动(含 interface list)
+            }
             void index.refreshSystemFull();
             scheduleReanalyze(); // RE-1:系统名单/位置刷新后重算诊断(系统包类型警告随之消长)
         })
@@ -592,6 +627,9 @@ export function registerRosMessageProviders(context: vscode.ExtensionContext, pa
             }
             const unsub = core.onDidChange(ev => {
                 if (ev.system !== undefined) {
+                    if (!isStarted()) {
+                        return;
+                    }
                     void index.refreshSystemFull();
                     scheduleReanalyze();
                 }
@@ -605,6 +643,13 @@ export function registerRosMessageProviders(context: vscode.ExtensionContext, pa
                 .getConfiguration("ROS2")
                 .get<number>("msg.systemRefreshMinutes", 10));
             index.setRefreshIntervalMs(minutes * 60 * 1000);
+        }
+        // 用户排除变更 → 全量重建基线(2026-10-18 后剪枝批:排除集每轮刷新重解析,重建即生效)
+        if (e.affectsConfiguration("ROS2.search.excludeFolders")) {
+            if (!isStarted()) {
+                return; // P2:未启动不 walk
+            }
+            void index.refreshWorkspace();
         }
     });
 
@@ -621,24 +666,27 @@ export function registerRosMessageProviders(context: vscode.ExtensionContext, pa
     });
 
     log.info(vscode.l10n.t("ROS message language providers registered: definition + hover + links + type completion + formatting + diagnostics (refresh interval {0} min)", refreshMinutes));
-    return [
-        definitionProvider,
-        hoverProvider,
-        documentLinkProvider,
-        formatProvider,
-        completionProvider,
-        ...diagnostics.disposables,
-        { dispose: () => {
-            index.dispose();
-            if (reanalyzeTimer) {
-                clearTimeout(reanalyzeTimer);
-            }
-        } },
-        documentCloseListener,
-        documentChangeListener,
-        systemRefreshListener,
-        configChangeListener,
-        openDocListener,
-        closeDocListener
-    ];
+    return {
+        disposables: [
+            definitionProvider,
+            hoverProvider,
+            documentLinkProvider,
+            formatProvider,
+            completionProvider,
+            ...diagnostics.disposables,
+            { dispose: () => {
+                index.dispose();
+                if (reanalyzeTimer) {
+                    clearTimeout(reanalyzeTimer);
+                }
+            } },
+            documentCloseListener,
+            documentChangeListener,
+            systemRefreshListener,
+            configChangeListener,
+            openDocListener,
+            closeDocListener
+        ],
+        start,
+    };
 }

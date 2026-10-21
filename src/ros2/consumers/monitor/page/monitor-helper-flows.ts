@@ -13,7 +13,9 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 import { composeApi } from "../../../api";
-import { describeHelperState, startParamHelper, stopParamHelper } from "../helper/param-helper-client";
+import {
+    describeHelperState, helperFailureSignal, startParamHelper, stopParamHelper,
+} from "../helper/param-helper-client";
 import { requestRefresh } from "./monitor-refresh";
 
 import { getLogger } from "../../../../logger";
@@ -37,25 +39,79 @@ function delayMs(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** 确认窗三态(2026-10-18):ok=达成期望;timeout=超时;tripped=熔断(带首因);
+ *  superseded=已被更新的启动/停止接管(调用方必须静默退出,不得再向页面发任何文案)。 */
+export type HelperWaitStatus = "ok" | "timeout" | "tripped" | "superseded";
+export interface HelperWaitResult {
+    status: HelperWaitStatus;
+    reason?: string;
+}
+/** 失败探针形态(=client.helperFailureSignal 的返回) */
+export type HelperFailureProbe = () => ReturnType<typeof helperFailureSignal>;
+
 /**
  * 等待助手达到期望在线状态(启动/停止助手后确认;ping 常驻助手进程)。
  * 窗口 15s——本机 Python 进程启动 ~1s,助手初始化 rclpy 另有 DDS 收敛抖动。
+ *
+ * 三态与探针(2026-10-18,事故「熔断后傻等 15s 报误导性超时」根治):
+ *  - failureProbe 每轮轮询后判定,熔断/接管即刻返回,不陪跑满 15s;
+ *  - 达成期望后再复查一次(熔断恰在成功判定后落地的窄窗);
+ *  - timeoutMs 与 runningProbe 参数化=测试缝(无头注入假探针/假 ping)。
  */
-async function waitForHelperState(expected: boolean, timeoutMs = 15000): Promise<boolean> {
+export async function waitForHelperState(
+    expected: boolean,
+    timeoutMs = 15000,
+    failureProbe?: HelperFailureProbe,
+    runningProbe: () => Promise<boolean> = () => monitorApi.helper_running()
+): Promise<HelperWaitResult> {
     // 真值比较(2026-09-26 修复):ping 响应曾以真值字符串("pong")上抛,严格 === 使
     // 健康助手的确认窗永远失败(页面却经刷新链的真值判断"突然翻转");归一后双口径一致
+    const tripCheck = (): HelperWaitResult | undefined => {
+        const sig = failureProbe?.();
+        if (!sig) {
+            return undefined;
+        }
+        return sig.kind === "tripped" ? { status: "tripped", reason: sig.reason } : { status: "superseded" };
+    };
+    const pre = tripCheck();
+    if (pre) {
+        return pre;
+    }
     const t0 = Date.now();
-    let running = !!(await monitorApi.helper_running());
+    let running = !!(await runningProbe());
     while (running !== expected && Date.now() - t0 < timeoutMs) {
         await delayMs(200);
-        running = !!(await monitorApi.helper_running());
+        const tripped = tripCheck();
+        if (tripped) {
+            return tripped;
+        }
+        running = !!(await runningProbe());
     }
-    return running === expected;
+    if (running !== expected) {
+        return { status: "timeout" };
+    }
+    const late = tripCheck();
+    if (late) {
+        return late;
+    }
+    return { status: "ok" };
 }
 
 export async function startHelperFlow(panel: vscode.WebviewPanel) {
     const t0 = Date.now();
     log.info(vscode.l10n.t("startHelper request received; starting the resident helper"));
+    // P4 环境门(入口):门关一句拒绝(带原因),不进入 starting 播报与 15s 在线等待——
+    // 此前的路径是无环境时"点了没反应+15s 空转+后台重试风暴"的源头
+    const envIssue = composeApi.environment.getEnvIssue();
+    if (envIssue !== null) {
+        log.warn(vscode.l10n.t("Helper start refused at entry: {0}", envIssue));
+        panel.webview.postMessage({
+            helperAction: 'error',
+            message: vscode.l10n.t("No usable ROS 2 environment detected; cannot start the helper. Reason: {0}", envIssue),
+            isRunning: false,
+        });
+        return;
+    }
     try {
         panel.webview.postMessage({
             helperAction: 'starting',
@@ -63,11 +119,21 @@ export async function startHelperFlow(panel: vscode.WebviewPanel) {
             isRunning: false
         });
 
-        startParamHelper(helperScript);
+        const generation = startParamHelper(helperScript);
         log.info(vscode.l10n.t("Helper start command issued ({0} ms); waiting for the helper to come online...", Date.now() - t0));
 
-        const online = await waitForHelperState(true);
-        if (!online) {
+        const result = await waitForHelperState(true, 15000, () => helperFailureSignal(generation));
+        if (result.status === "tripped") {
+            // 熔断原因已由 failureCallback 直达页面(ros2-monitor 装配),此处只终结流程——
+            // 再发"未在预期时间内上线"会把真原因覆盖成误导文案(2026-10-18 事故现场)
+            log.warn(vscode.l10n.t("Helper start aborted (failure breaker): {0}", result.reason ?? ""));
+            return;
+        }
+        if (result.status === "superseded") {
+            log.info(vscode.l10n.t("Helper start flow superseded by a newer start/stop request"));
+            return;
+        }
+        if (result.status === "timeout") {
             const snapshot = describeHelperState();
             log.warn(vscode.l10n.t("Helper start command issued but the helper did not come online within {0} ms; client state: {1}; helper-side log: {2}", Math.round(Date.now() - t0), snapshot, path.join(os.tmpdir(), "rde_param_helper.log")));
             panel.webview.postMessage({
@@ -107,8 +173,8 @@ export async function stopHelperFlow(panel: vscode.WebviewPanel) {
         stopParamHelper();
         log.info(vscode.l10n.t("Helper stop command issued ({0} ms); waiting for the helper to go offline...", Date.now() - t0));
 
-        const offline = await waitForHelperState(false);
-        if (!offline) {
+        const result = await waitForHelperState(false);
+        if (result.status !== "ok") {
             log.warn(vscode.l10n.t("Helper stop command issued but the helper did not go offline within {0} ms", Math.round(Date.now() - t0)));
             panel.webview.postMessage({
                 helperAction: 'error',

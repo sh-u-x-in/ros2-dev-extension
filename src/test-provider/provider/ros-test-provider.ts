@@ -191,14 +191,19 @@ export class RosTestProvider {
         });
 
         // 根节点解析:VS Code 请求根子项时给全量(自动触发 ⇒ 超时不强制落地)
+        // P2:未启动(门关)不调度——展开 Test Explorer 不触发任何发现
         this.testController.resolveHandler = async (item) => {
-            if (!item) {
+            if (!item && this.started) {
                 this.queue.schedule({ kind: 'full' });
             }
         };
 
         // T4:`refreshHandler` 存在时 VS Code 才在视图里显示刷新按钮(手动 ⇒ 超时也强制落地)
+        // P2:未启动(门关)刷新为空操作
         this.testController.refreshHandler = async () => {
+            if (!this.started) {
+                return;
+            }
             this.queue.schedule({ kind: 'full', force: true });
             await this.queue.flushNow();
         };
@@ -222,10 +227,28 @@ export class RosTestProvider {
         };
 
         this.disposables.push(this.testController);
+        // P2 start 化(2026-10-18):构造零后台——三订阅(包域/测试文件 watcher/build 中心差分)
+        // 与首次全量发现移入显式 start(),由编排层在环境门成立后调用。
+        // 守卫必须先于 start 就位:创建 controller 这一步本身就会触发 resolveHandler。
+        // ⚠️ resolveHandler 不可加 async 前置等待——VS Code 在 createTestController 同步期就会请求根。
+    }
+
+    /** P2 start 化:是否已启动(发现入口与订阅的门) */
+    private started = false;
+
+    /**
+     * 显式启动(幂等;编排层在环境门成立后调用):
+     * 订阅 package-core 包域 + 测试文件 watcher + build 中心包差分 + 首次全量发现。
+     * 门关不调用 → Test Explorer 保留根节点但为空,展开/刷新不触发任何发现。
+     */
+    public start(): void {
+        if (this.started) {
+            return;
+        }
+        this.started = true;
         this.subscribeCoreChanges();
         this.watchTestFiles();
         this.subscribePackageChanges();
-
         // 初始发现(fire and forget;force = 首次没有旧状态可保留,超时也得落地部分结果)
         this.queue.schedule({ kind: 'full', force: true });
     }
@@ -1530,6 +1553,9 @@ export class RosTestProvider {
      * 不再是"先弹『已刷新』、其实还没干"(旧实现同步返回,提示先于结果)。
      */
     public async refresh(): Promise<number> {
+        if (!this.started) {
+            return 0; // P2:未启动(门关)刷新为空操作(命令层已被统一围栏拒绝,此处纵深)
+        }
         this.queue.schedule({ kind: 'full', force: true });
         await this.queue.flushNow();
         return this.lastNodeCount;

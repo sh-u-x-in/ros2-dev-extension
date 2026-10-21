@@ -22,7 +22,7 @@ import * as vscode from "vscode";
 
 import { getLogger } from "../../../logger";
 import { usesCustomPlaceholder } from "./expand";
-import { factoryText } from "./factory-l10n";
+import { factoryText, presetLabel } from "./factory-l10n";
 import { flattenArgList, hasArgChoices } from "./expand";
 import type { CommandSpec } from "./types";
 
@@ -68,6 +68,7 @@ export interface PresetPick {
 export function makePresetItems(
     spec: CommandSpec,
     remembered?: { picked?: readonly number[]; custom?: boolean },
+    factory?: CommandSpec,
 ): PresetItem[] {
     const picked = new Set(remembered?.picked ?? []);
     const items: PresetItem[] = [];
@@ -81,7 +82,9 @@ export function makePresetItems(
     }
     for (const choice of flattenArgList(spec.argv_list)) {
         items.push({
-            label: choice.describe.length > 0 ? factoryText(choice.describe) : choice.argv,
+            // 2026-10-21 条目级严格判定:同槽位 + argv + describe 逐字段相等才算出厂(查册译文);
+            // 任一字段改过的用户条目一律原样(presetLabel 内判定)
+            label: choice.describe.length > 0 ? presetLabel(choice, factory) : choice.argv,
             description: choice.argv,
             detail: vscode.l10n.t("-> fills {0}", "${" + choice.slot + "}"),
             picked: picked.has(choice.index),
@@ -110,12 +113,17 @@ export interface PickPresetOptions {
     placeholder?: string;
     /** 自定义输入框的标题(缺省 = 弹窗标题) */
     customTitle?: string;
-    /** 自定义输入框的占位提示 */
-    customPlaceholder?: string;
+    /** (2026-10-18 已删除)占位提示改由 presets 裸键 value(spec.customHint)承载,经 factoryText 显示 */
     /** 预填的自定义输入(如上次输入) */
     customValue?: string;
     /** 默认勾选(记忆) */
     remembered?: { picked?: readonly number[]; custom?: boolean };
+    /**
+     * 出厂规格(本命令域的 fallback 常量;2026-10-21 条目级严格判定):
+     * 给出时,槽位条目只在「同槽位 + argv + describe 逐字节相等」时才按出厂文案查册显示,
+     * 任一字段改过的用户条目一律原样;缺省(无头/未传)⇒ 原样。
+     */
+    factory?: CommandSpec;
 }
 
 /**
@@ -130,38 +138,39 @@ export async function pickPresets(
 
     // 形态 ①:没有任何占位符要填(预设被删干净 + 模板不用 ${0})⇒ 完全不弹
     if (plan === "none") {
-        log.debug("Second stage: no presets and the template has no custom placeholder -> no second stage");
+        log.debug(vscode.l10n.t("Second stage: no presets and the template has no custom placeholder -> no second stage"));
         return { picked: [] };
     }
 
     // 形态 ②:只有自定义输入 ⇒ 直接跳输入框
     if (plan === "input-only") {
-        log.debug("Second stage: custom input only -> input box shown directly");
+        log.debug(vscode.l10n.t("Second stage: custom input only -> input box shown directly"));
         const value = await vscode.window.showInputBox({
             title: options.customTitle ?? options.title,
             prompt: factoryText(spec.custom),
-            placeHolder: options.customPlaceholder,
+            // 占位提示(2026-10-18 接入查表):presets 裸键 value(spec.customHint)经 factoryText 显示;缺省 = 无占位
+            placeHolder: spec.customHint ? factoryText(spec.customHint) : undefined,
             value: options.customValue ?? "",
         });
         if (value === undefined) {
-            log.trace("Second stage: manual input cancelled (aborting this flow)");
+            log.trace(vscode.l10n.t("Second stage: manual input cancelled (aborting this flow)"));
             return undefined;
         }
         if (value.trim().length === 0) {
-            log.trace("Second stage: manual input empty; continuing without arguments");
+            log.trace(vscode.l10n.t("Second stage: manual input empty; continuing without arguments"));
             return { picked: [] };
         }
         return { custom: value, picked: [] };
     }
 
     // 形态 ③:列表(第 1 项自定义输入 + 预设多选)
-    const selected = await vscode.window.showQuickPick(makePresetItems(spec, options.remembered), {
+    const selected = await vscode.window.showQuickPick(makePresetItems(spec, options.remembered, options.factory), {
         canPickMany: true,
         title: options.title,
         placeHolder: options.placeholder,
     });
     if (!selected) {
-        log.trace("Second-stage dialog: user cancelled");
+        log.trace(vscode.l10n.t("Second-stage dialog: user cancelled"));
         return undefined;
     }
 
@@ -183,18 +192,19 @@ export async function pickPresets(
         const value = await vscode.window.showInputBox({
             title: options.customTitle ?? options.title,
             prompt: factoryText(spec.custom),
-            placeHolder: options.customPlaceholder,
+            // 占位提示(2026-10-18 接入查表):同形态 ② —— presets 裸键 value 经 factoryText 显示
+            placeHolder: spec.customHint ? factoryText(spec.customHint) : undefined,
             value: options.customValue ?? "",
         });
         if (value === undefined) {
             // Esc 一律 = 取消(与列表 Esc、input-only 的 Esc 同一语义);空串回车才是"不追加,继续"
-            log.trace("Second-stage dialog: custom input cancelled (aborting this flow)");
+            log.trace(vscode.l10n.t("Second-stage dialog: custom input cancelled (aborting this flow)"));
             return undefined;
         }
         if (value.trim().length > 0) {
             custom = value;
         } else {
-            log.trace("Second-stage dialog: custom input empty; nothing appended (other checks still applied)");
+            log.trace(vscode.l10n.t("Second-stage dialog: custom input empty; nothing appended (other checks still applied)"));
         }
     }
 

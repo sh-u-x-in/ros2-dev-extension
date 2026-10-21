@@ -20,7 +20,9 @@ import { getLogger } from "../../../logger";
 import * as vscode from "vscode";
 import * as path from "path";
 
+import { GATE_REFUSALS, registerGatedCommand } from "../../../commands/gated-command";
 import { ensureErrorMessageOnException } from "../../../error-utils";
+import { composeApi } from "../../../ros2/api";
 import { ColconBuildCommand, ColconBuildPackageDebugCommand, ColconBuildPackageReleaseCommand, ColconToggleIgnoreCommand } from "./command-ids";
 import { buildSinglePackageByName } from "./single-package";
 import * as smartBuild from "./smart-build";
@@ -61,8 +63,9 @@ async function findPackageForPath(data: BuildDataSource | null, folderPath: stri
 
 /**
  * 注册 colcon 构建相关命令:忽略切换(COLCON_IGNORE)+ 右键单包构建(Release/Debug)+ 智能构建委托。
+ * P2:getter 注入(命令壳先于 package-core 构造注册;每次调用时活读当前实例)。
  */
-export function registerColconCommands(context: vscode.ExtensionContext, data: BuildDataSource | null): void {
+export function registerColconCommands(context: vscode.ExtensionContext, getData: () => BuildDataSource | null): void {
     log.trace("Registering colcon commands");
     // 命令:切换 COLCON_IGNORE 忽略状态(右键文件夹)
     vscode.commands.registerCommand(ColconToggleIgnoreCommand, async (uri: vscode.Uri) => {
@@ -74,6 +77,7 @@ export function registerColconCommands(context: vscode.ExtensionContext, data: B
             }
 
             // 翻转 COLCON_IGNORE(2026-08-28:切 package-core.toggleIgnore,取代旧壳 toggleColconIgnore + flushPackagesSyncNow)
+            const data = getData();
             if (!data) {
                 vscode.window.showErrorMessage(vscode.l10n.t("Package info not ready; cannot toggle ignore status (please wait and retry)"));
                 return;
@@ -91,73 +95,73 @@ export function registerColconCommands(context: vscode.ExtensionContext, data: B
     // TODO: 旧"按包名配置忽略"的右键菜单上下文(ros2.packageIgnored / ROS2.colcon.updateIgnoredContext)已废弃,
     // 忽略判定统一走 COLCON_IGNORE 文件标记;若需右键菜单按忽略态显隐,待重新设计。
 
-    // 命令:右键单包构建 Release(RelWithDebInfo 优化构建)
-    vscode.commands.registerCommand(ColconBuildPackageReleaseCommand, async (uri: vscode.Uri) => {
-        ensureErrorMessageOnException(async () => {
-            if (!uri || !uri.fsPath) {
-                vscode.window.showErrorMessage(vscode.l10n.t("Right-click a folder to build a package"));
-                return;
-            }
+    // 命令:右键单包构建 Release / Debug(2026-10-18 P1:统一命令围栏——门关一句拒绝(与终点门同键),
+    // 不进包查找/前检链;实参透传 + 异常兜底由 registerGatedCommand 内联)
+    const buildGate = {
+        getIssue: () => composeApi.environment.getEnvIssue(),
+        refuse: GATE_REFUSALS.build,
+    };
+    registerGatedCommand(ColconBuildPackageReleaseCommand, buildGate, async (uri: vscode.Uri) => {
+        if (!uri || !uri.fsPath) {
+            vscode.window.showErrorMessage(vscode.l10n.t("Right-click a folder to build a package"));
+            return;
+        }
 
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!workspaceRoot) {
-                vscode.window.showErrorMessage(vscode.l10n.t("No workspace folder found"));
-                return;
-            }
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage(vscode.l10n.t("No workspace folder found"));
+            return;
+        }
 
-            // 按路径查找包(2026-08-30:仅可构建包放行,被忽略包提示)
-            const found = await findPackageForPath(data, uri.fsPath);
-            if (!found) {
-                vscode.window.showWarningMessage(vscode.l10n.t("No ROS 2 package found at this location"));
-                return;
-            }
-            if (found.status === "ignored") {
-                vscode.window.showWarningMessage(vscode.l10n.t("Package {0} is ignored by COLCON_IGNORE; cannot build it directly", found.name));
-                return;
-            }
+        // 按路径查找包(2026-08-30:仅可构建包放行,被忽略包提示)
+        const found = await findPackageForPath(getData(), uri.fsPath);
+        if (!found) {
+            vscode.window.showWarningMessage(vscode.l10n.t("No ROS 2 package found at this location"));
+            return;
+        }
+        if (found.status === "ignored") {
+            vscode.window.showWarningMessage(vscode.l10n.t("Package {0} is ignored by COLCON_IGNORE; cannot build it directly", found.name));
+            return;
+        }
 
-            log.debug(vscode.l10n.t("Building package (Release): {0}", found.name));
-            // 2026-09-25(第五批):执行体抽到 single-package.buildSinglePackageByName ——
-            // 与包内容侧边栏的"构建此包"共用同一入口(检查/警告并发 + 记忆展开 + 执行)
-            await buildSinglePackageByName(data, found.name, "release");
-        });
+        log.debug(vscode.l10n.t("Building package (Release): {0}", found.name));
+        // 2026-09-25(第五批):执行体抽到 single-package.buildSinglePackageByName ——
+        // 与包内容侧边栏的"构建此包"共用同一入口(检查/警告并发 + 记忆展开 + 执行)
+        await buildSinglePackageByName(getData(), found.name, "release");
     });
 
     // 命令:右键单包构建 Debug(调试构建)
-    vscode.commands.registerCommand(ColconBuildPackageDebugCommand, async (uri: vscode.Uri) => {
-        ensureErrorMessageOnException(async () => {
-            if (!uri || !uri.fsPath) {
-                vscode.window.showErrorMessage(vscode.l10n.t("Right-click a folder to build a package"));
-                return;
-            }
+    registerGatedCommand(ColconBuildPackageDebugCommand, buildGate, async (uri: vscode.Uri) => {
+        if (!uri || !uri.fsPath) {
+            vscode.window.showErrorMessage(vscode.l10n.t("Right-click a folder to build a package"));
+            return;
+        }
 
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!workspaceRoot) {
-                vscode.window.showErrorMessage(vscode.l10n.t("No workspace folder found"));
-                return;
-            }
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage(vscode.l10n.t("No workspace folder found"));
+            return;
+        }
 
-            // 按路径查找包(2026-08-30:仅可构建包放行,被忽略包提示)
-            const found = await findPackageForPath(data, uri.fsPath);
-            if (!found) {
-                vscode.window.showWarningMessage(vscode.l10n.t("No ROS 2 package found at this location"));
-                return;
-            }
-            if (found.status === "ignored") {
-                vscode.window.showWarningMessage(vscode.l10n.t("Package {0} is ignored by COLCON_IGNORE; cannot build it directly", found.name));
-                return;
-            }
+        // 按路径查找包(2026-08-30:仅可构建包放行,被忽略包提示)
+        const found = await findPackageForPath(getData(), uri.fsPath);
+        if (!found) {
+            vscode.window.showWarningMessage(vscode.l10n.t("No ROS 2 package found at this location"));
+            return;
+        }
+        if (found.status === "ignored") {
+            vscode.window.showWarningMessage(vscode.l10n.t("Package {0} is ignored by COLCON_IGNORE; cannot build it directly", found.name));
+            return;
+        }
 
-            log.debug(vscode.l10n.t("Building package (Debug): {0}", found.name));
-            await buildSinglePackageByName(data, found.name, "debug");
-        });
+        log.debug(vscode.l10n.t("Building package (Debug): {0}", found.name));
+        await buildSinglePackageByName(getData(), found.name, "debug");
     });
 
     // 智能构建:Ctrl+Shift+B 两级选择(多选包 + 单选构建配置),带记忆
-    vscode.commands.registerCommand(ColconBuildCommand, () => {
-        ensureErrorMessageOnException(async () => {
-            log.trace(vscode.l10n.t("Executing command: {0}", ColconBuildCommand));
-            await smartBuild.runColconBuild(data);
-        });
+    // (smart-build.ts 入口另有同键早退,保留为 webview 等非命令路径的纵深;wrapper 命中即 return 不双弹)
+    registerGatedCommand(ColconBuildCommand, buildGate, async () => {
+        log.trace(vscode.l10n.t("Executing command: {0}", ColconBuildCommand));
+        await smartBuild.runColconBuild(getData());
     });
 }

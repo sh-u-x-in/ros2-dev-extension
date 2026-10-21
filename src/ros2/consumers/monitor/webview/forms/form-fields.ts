@@ -8,7 +8,6 @@
  * 键盘模型 attachFormInputKeys(Enter 流转/Shift+Enter 新建/退格回退删除/方向键流转)。
  */
 
-import { l10n } from "vscode";
 
 import { t } from "../shared/i18n";
 

@@ -26,10 +26,16 @@ export type DriverEvent =
  *  - 系统侧取数/环境事件已随 source/ 删除(2026-08-28),归 ros2/(Ros2ServiceApi / EnvironmentFacade)。
  */
 export interface PackageFetcher {
+    /**
+     * 显式启动(P2 组件 start 化):创建定时器与 fs 监听并挂接事件。
+     * 构造零副作用——start 前到达的 setRefreshIntervalMs 由实现暂存,start 时按暂存值创建;
+     * 幂等(重复调用空操作);dispose 后调用空操作。
+     */
+    start(): void;
     /** 订阅驱动原始事件,返回取消订阅函数 */
     onExternalChange(cb: (ev: DriverEvent) => void): () => void;
-    /** 运行中重设强制刷新周期(ms;<= 0 停用周期事件;2026-09-28 reconfigure 接线) */
+    /** 运行中重设强制刷新周期(ms;<= 0 停用周期事件;2026-09-28 reconfigure 接线;start 前到达则暂存) */
     setRefreshIntervalMs(ms: number): void;
-    /** 释放驱动层资源(定时器/监听) */
+    /** 释放驱动层资源(定时器/监听;容忍未 start) */
     dispose(): void;
 }

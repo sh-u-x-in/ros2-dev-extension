@@ -13,6 +13,8 @@ import * as vscode from "vscode";
 import { getLogger } from "../../../logger";
 import { IncludeGraph } from "./include-graph";
 import { PackageMap, SystemDirLoadedEvent } from "../../shared/package-map";
+import { DEFAULT_EXCLUDED_DIR_NAMES } from "../../../build-tool/walk";
+import { isPathExcludedNormalized, resolveExcludeFoldersNormalized } from "../../../build-tool/walk/base/path-exclude";
 
 const log = getLogger("xacro-watcher");
 
@@ -20,6 +22,21 @@ const WATCHER_GLOB = "**/*.{xacro,urdf}";
 const WATCHER_DEBOUNCE_MS = 300;
 const FALLBACK_POLL_PERIOD_MS = 60_000;
 const POLL_BATCH_THRESHOLD_MS = 100; // 时间片 < 0.1s → 合并批量
+
+/**
+ * 增量面排除门(模块级纯函数,2026-10-18 后剪枝批):内置产物目录段(补齐基线 walk 同口径——
+ * 此前 watcher 增量只判扩展名,build/install 里新增的 .xacro 会被塞进图)∪ 用户排除目录
+ * (`ROS2.search.excludeFolders`,路径级后剪枝,win32 折叠)。
+ */
+export function isExcludedXacroSource(p: string, userExcludedNormalized: string[]): boolean {
+    const segs = p.split("\\").join("/").split("/");
+    for (const s of segs) {
+        if (DEFAULT_EXCLUDED_DIR_NAMES.includes(s)) {
+            return true;
+        }
+    }
+    return isPathExcludedNormalized(p, userExcludedNormalized);
+}
 
 export class XacroWatcher {
     private watcher: vscode.FileSystemWatcher | undefined;
@@ -118,12 +135,22 @@ export class XacroWatcher {
         const items = Array.from(this.pending.entries());
         this.pending.clear();
         log.debug(vscode.l10n.t("xacro watcher flush: {0} items", items.length));
+        // 排除门(2026-10-18 后剪枝批):内置产物目录段 + 用户排除路径,每批解析一次;
+        // 只门 upsert(新增/改内容),remove 恒放行(清图语义:曾经进图的排除文件也要能删掉)
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+        const userExcluded = resolveExcludeFoldersNormalized(
+            wsRoot,
+            vscode.workspace.getConfiguration("ROS2").get<string[]>("search.excludeFolders", []),
+        );
         for (const [key, item] of items) {
             if (this.disposed) {
                 return;
             }
             const uri = vscode.Uri.parse(key);
             if (item.op === "upsert") {
+                if (isExcludedXacroSource(uri.fsPath, userExcluded)) {
+                    continue; // 排除目录/用户排除路径内的 .xacro/.urdf 不进图
+                }
                 // 幽灵事件由 graph.upsert 内容比对过滤(07 §1.3);item.text = 活文本(未保存)
                 this.graph.upsert(uri, item.text);
                 // 自身 ${} 边重解 + property 变化传播依赖者(07 §1.4)

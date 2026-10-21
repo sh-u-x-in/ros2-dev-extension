@@ -44,6 +44,14 @@ export async function buildSinglePackageByName(
         vscode.window.showErrorMessage(vscode.l10n.t("Package info not ready; cannot build (please wait and retry)"));
         return;
     }
+    // 入口环境早退(P1+P5,2026-10-18):右键 Release/Debug + 侧边栏"构建此包"三入口汇流于此,
+    // 一处拦截全覆盖;前检弹窗/记忆展开都在门后。文案与 ros_task_runner.colcon_build 终点门同键(终点门保留纵深)。
+    const envIssue = composeApi.environment.getEnvIssue();
+    if (envIssue !== null) {
+        log.info(vscode.l10n.t("Single-package build refused at entry: no usable ROS 2 environment"));
+        vscode.window.showErrorMessage(vscode.l10n.t("No usable ROS 2 environment detected; cannot build. Reason: {0}. Configure and activate a ROS environment (ROS2.rosSetupScript / ROS2.pixiRoot) first, then retry.", envIssue));
+        return;
+    }
     const buildable = await data.getBuildPackages();
     const hit = buildable.find((p) => p.name === name);
     if (!hit) {
@@ -64,7 +72,7 @@ export async function buildSinglePackageByName(
         clean: methodPlan.cleanCache,
     });
     if (expanded.empty) {
-        vscode.window.showErrorMessage(vscode.l10n.t("Build command expanded to empty; cancelled. Check the template in setting ROS2.build.shareSpec."));
+        vscode.window.showErrorMessage(vscode.l10n.t("Build command expanded to empty; cancelled. Check the template in setting ROS2.build.template."));
         return;
     }
     const argv = variant === "debug" ? [...expanded.argv, "--cmake-args", "-DCMAKE_BUILD_TYPE=Debug"] : expanded.argv;

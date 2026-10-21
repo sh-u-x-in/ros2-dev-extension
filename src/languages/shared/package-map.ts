@@ -155,6 +155,11 @@ export class PackageMap {
         return this.initPromise;
     }
 
+    /** 显式启动入口(P2 start 化;与 initialize 同义单飞——三语言域/编排层统一以此语义调用) */
+    ensureInitialized(): Promise<void> {
+        return this.initialize();
+    }
+
     private async doInitialize(): Promise<void> {
         // 工作区包表:立即扫描(读 package-core workspace 域)。
         // 系统名单:不在此加载——由 extension 在 env 变化 → core.refreshSystem() → ev.system 后 acceptSystem 喂入。

@@ -34,9 +34,8 @@ export interface BuildState {
 /**
  * 读取构建状态记忆;文件不存在 / 损坏 / 字段形状不对时逐字段回退默认值。
  */
-export async function readBuildState(workspaceRoot: string): Promise<BuildState> {
-    log.debug(l10n.t("Reading build state memory: {0}", workspaceRoot));
-    const parsed = await readStateFile(workspaceRoot);
+export async function readBuildState(): Promise<BuildState> {
+    const parsed = await readStateFile();
     return {
         buildPackages: Array.isArray(parsed.buildPackages) ? parsed.buildPackages : [],
         knownPackages: Array.isArray(parsed.knownPackages) ? parsed.knownPackages : [],
@@ -48,9 +47,9 @@ export async function readBuildState(workspaceRoot: string): Promise<BuildState>
  * 状态文件里其它写者的字段(含 `selectionMemory` 记忆模块的槽)原样保留,且并发写不会互相覆盖。
  * 写失败静默降级(见 state-file.ts)。
  */
-export async function writeBuildState(workspaceRoot: string, state: BuildState): Promise<void> {
+export async function writeBuildState(state: BuildState): Promise<void> {
     log.debug(l10n.t("Writing build state memory: {0} packages", state.buildPackages.length));
-    await updateStateFile(workspaceRoot, (draft) => {
+    await updateStateFile((draft) => {
         draft.buildPackages = state.buildPackages;
         draft.knownPackages = state.knownPackages;
     });

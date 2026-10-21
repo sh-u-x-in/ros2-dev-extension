@@ -41,7 +41,7 @@
 主要设置(见 [docs/configuration.md](https://github.com/sh-u-x-in/ros2-dev-extension/blob/main/docs/zh-cn/configuration.md)):
 
 * `ROS2.env.*` —— 发行版 / setup 脚本 / pixi 环境;
-* `ROS2.build.shareSpec` / `ROS2.run.shareSpec` / `ROS2.launch.shareSpec` —— 三条命令的模板与预设机制;
+* `ROS2.build.template` + `ROS2.build.presets` / `ROS2.run.*` / `ROS2.launch.*` —— 三条命令的模板与预设机制(平铺字符串 + 键值表,设置页直接编辑);
 * `ROS2.build.installMethod` / `ROS2.build.installLayout` —— 安装形态(auto / symlink / copy)与布局;
 * `ROS2.ide.*` —— 智能感知引擎选择、分引擎托管条目替换表、`.clangd` 接管排序;
 * `ROS2.packages.userIndex` —— 依赖候选项的用户描述覆盖表;

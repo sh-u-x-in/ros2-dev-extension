@@ -10,7 +10,6 @@
  * 参数区:文件树(2026-09-26);ⓘ 悬浮标注分布各区块旁(2026-09-24)。
  */
 
-import { l10n } from "vscode";
 
 import { t } from "./shared/i18n";
 

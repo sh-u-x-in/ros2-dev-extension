@@ -27,6 +27,21 @@ TASK_WARN_SEC = 40.0                 # 内层看门狗:任务超长警告阈值
 TASK_HARD_SEC = 120.0                # 内层看门狗:硬上限→自杀重启(Python 杀不死线程)
 GRAPH_DIFF_INTERVAL_SEC = 0.5        # 差分起步周期(按图规模自适应 0.5/1/3)
 
+# ---- P4 握手(2026-10-18):连接首帧 hello 环境指纹,不匹配 deny 踢除 ----
+PROTO_VERSION = "rde-helper/1"       # 协议版本(hello.proto;不符即拒)
+HELLO_TIMEOUT_SEC = 3.0              # 未验证连接的 hello 等待上限(超时踢除)
+HELPER_FINGERPRINT_KEYS = ("ROS_VERSION", "ROS_DISTRO", "ROS_DOMAIN_ID", "RMW_IMPLEMENTATION")
+
+
+def helper_fingerprint():
+    """服务端启动时的环境指纹(自 os.environ;未设与 "" 归一为 "0",避免"未设"vs"0" 误判)。
+    客户端 hello.env 逐键比对(键全小写,两侧归一口径一致)。"""
+    out = {}
+    for key in HELPER_FINGERPRINT_KEYS:
+        value = os.environ.get(key)
+        out[key] = str(value) if value not in (None, "") else "0"
+    return out
+
 # ---- 业务常量 ----
 TRUNCATE_LIMIT = 1000
 WORKER_COUNT = 6              # 4→6(重设计 P2/E4:多卡死首触并发的容量余量)
@@ -79,10 +94,17 @@ def disk_log(message):
 
 def helper_log(level, msg):
     """诊断出口:错误/警告写 stderr(扩展按 [rde-helper:level] 前缀分级落输出面板),
-    同时落独立调试日志——从进程出生即存在(早于 socket 服务)。"""
+    同时落独立调试日志——从进程出生即存在(早于 socket 服务)。
+    stderr 写入必须防断管(2026-10-19 僵尸助手根因):扩展宿主重载/关闭会掐断
+    stderr 读端,此后任何 warn 级写入抛 BrokenPipeError——housekeeping 线程曾死在
+    宽限自退的那条 warn 上,心跳/踢除/自退全灭=僵尸助手。管道断了就放弃 stderr,
+    磁盘日志是永续通道。"""
     disk_log(f"[{level}] {msg}")
-    sys.stderr.write(f"[rde-helper:{level}] {msg}\n")
-    sys.stderr.flush()
+    try:
+        sys.stderr.write(f"[rde-helper:{level}] {msg}\n")
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
 
 
 def _on_sigterm(_signum, _frame):

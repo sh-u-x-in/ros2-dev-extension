@@ -161,14 +161,18 @@ export async function walkWithTimeout(
                 timedOut = true;
                 return;
             }
-            if (!entry.isDirectory()) {
-                continue;
+            // 符号链接判定必须先于 isDirectory:链接的 isDirectory() 恒为 false(尤其 win32),
+            // 先判目录会令 followSymlinks=true 永远到不了跟随分支(2026-10-18 修:
+            // 纯 TS 降级路径符号链接搜索整体失效;链接指向文件时 walk() 的 readdir 以 ENOTDIR 跳过)
+            if (entry.isSymbolicLink()) {
+                if (!options.followSymlinks) {
+                    continue; // 符号链接:默认不跟随
+                }
+            } else if (!entry.isDirectory()) {
+                continue; // 非链接非目录(普通文件):第二阶段不递归
             }
             if (options.excludedDirNames?.has(entry.name)) {
-                continue; // 目录名排除(如 build/install/log)
-            }
-            if (entry.isSymbolicLink() && !options.followSymlinks) {
-                continue; // 符号链接:默认不跟随
+                continue; // 目录名排除(如 build/install/log;被排除名即使是指向别处的链接也不进)
             }
             await walk(path.join(dir, entry.name), depth + 1);
         }

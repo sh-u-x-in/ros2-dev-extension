@@ -19,7 +19,7 @@ export type { WalkOptions, WalkResult, FilePattern } from "./base/ts-walk";
 
 // 配置(walk-config 既有导出)
 export { getWalkTimeoutConfig, WALK_TIMEOUT_PROFILES } from "./base/walk-config";
-export type { WalkSearchType, WalkTimeoutConfig, WalkTimeoutOverride } from "./base/walk-config";
+export type { WalkSearchType, WalkTimeoutConfig } from "./base/walk-config";
 
 // 排除工具(由 walk 暴露)
 export { DEFAULT_EXCLUDED_DIR_NAMES, EXCLUDE_GLOB } from "./base/excluded-paths";

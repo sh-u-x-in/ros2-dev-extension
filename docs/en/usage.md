@@ -28,7 +28,7 @@ Right-clicking a folder in the Explorer offers **Toggle Colcon Ignore**, **Colco
 
 ## Building Packages
 
-`Ctrl+Shift+B` (or **ROS2: Build ROS 2 Packages**) starts the smart build flow: multi-select the packages to build, then optionally pick argument presets (e.g. verbose output) or type custom arguments — your selection is remembered for next time. The build command itself is fully customizable via the `ROS2.build.shareSpec` template in settings, and pre-build checks warn about install-method (symlink/copy) and layout (merged/isolated) conflicts before they fail your build:
+`Ctrl+Shift+B` (or **ROS2: Build ROS 2 Packages**) starts the smart build flow: multi-select the packages to build, then optionally pick argument presets (e.g. verbose output) or type custom arguments — your selection is remembered for next time. The build command itself is fully customizable via the `ROS2.build.template` / `ROS2.build.presets` settings, and pre-build checks warn about install-method (symlink/copy) and layout (merged/isolated) conflicts before they fail your build:
 
 ![Smart build: workspace build, package multi-select and argument presets](../assets/build-preset.gif)
 

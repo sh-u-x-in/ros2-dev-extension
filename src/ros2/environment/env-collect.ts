@@ -13,7 +13,8 @@
  *  - Linux/macOS:bash 交互链(本采集器统一走 bash);
  *  - Windows:退化为两次 sourceSetupFile(rde-common 旧机制,vcvarsall/pixi 链),行为与重设计前一致。
  *
- * 失败处理(验货):关键变量缺失 / 条目数异常 → 返回失败原因,调用方保留旧快照。
+ * 失败处理(验货):关键变量缺失 / 条目数异常 / ros2 可执行不在快照 PATH → 返回失败原因,
+ * 调用方保留旧快照并置陈旧标志(见 source.ts)。
  * 采集可行性由用户环境保证(责任转嫁):不作跨机器兼容兜底。
  */
 
@@ -103,7 +104,35 @@ async function resolveSystemSetupScript(): Promise<{ script: string } | { error:
     return { script };
 }
 
-/** 通用验货:通过返回 null;失败返回原因(关键变量存在 + 条目数下限) */
+/**
+ * ros2 可执行存在性探针(2026-10-18 P0 判据底座):按快照 PATH 逐目录查找 ros2 可执行文件。
+ * 拦两类假环境:shell rc 注入 ROS_DISTRO 但机器未装 ROS 2、/opt/ros 空壳残留(脚本在、bin 已删)。
+ * PATH 键取 env.PATH ?? env.Path(Windows 侧 rde-common `set` 解析保留原大小写,两形态都收);
+ * win32 名单沿用状态栏诊断先例(ros2 / .exe / .cmd / .bat)。纯 fs 存在性检查,无子进程。
+ */
+export function probeRos2Executable(env: Record<string, string>): string | null {
+    const envPath = env.PATH ?? env.Path;
+    if (!envPath) {
+        return l10n.t("PATH missing from environment snapshot");
+    }
+    const names = process.platform === "win32"
+        ? ["ros2", "ros2.exe", "ros2.cmd", "ros2.bat"]
+        : ["ros2"];
+    for (const dir of envPath.split(path.delimiter).map((s) => s.trim()).filter((s) => s.length > 0)) {
+        for (const name of names) {
+            try {
+                if (fs.existsSync(path.join(dir, name))) {
+                    return null;
+                }
+            } catch {
+                // 坏路径条目跳过
+            }
+        }
+    }
+    return l10n.t("ros2 executable not found in PATH");
+}
+
+/** 通用验货:通过返回 null;失败返回原因(关键变量存在 + 条目数下限 + ros2 可执行存在) */
 function validateSnapshot(env: Record<string, string>): string | null {
     if (!env.ROS_DISTRO) {
         return l10n.t("ROS_DISTRO missing (system chain not in effect)");
@@ -115,7 +144,7 @@ function validateSnapshot(env: Record<string, string>): string | null {
     if (n < MIN_ENV_ENTRIES) {
         return l10n.t("Abnormal entry count ({0} < {1})", n, MIN_ENV_ENTRIES);
     }
-    return null;
+    return probeRos2Executable(env);
 }
 
 /** Unix:bash 交互链单次采集(系统 + 工作空间) */

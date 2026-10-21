@@ -56,4 +56,24 @@ export interface PackageFacadeApi {
 // 消费方(语言服务/derive)只读门面 PackageDataState 域,内部结构不再泄漏。
 export type { PackageChangeEvent, PackageDataState } from "../data/state";
 export type { PackageEntry } from "../shared/types";
+
+/** 统一环境门裁决结果(2026-10-18 P1:不可放行时带原因,消费方据此区分提示口径) */
+export interface GateDecision {
+    allowed: boolean;
+    /** 不放行原因:env=门槛关(环境不可用);packages=门户关(零包)且倾向关;null=放行 */
+    reason: "env" | "packages" | null;
+}
+
+/** 统一环境门服务(配置生成域等消费方经本接口注入;实现 = 根目录 gate.ts createGateService) */
+export interface GateService {
+    /** 实时裁决(不缓存——环境/包/倾向均可运行时翻转) */
+    evaluate(): GateDecision;
+}
+
+/** 统一环境门数据源(组合根注入三 getter) */
+export interface GateServiceOptions {
+    envAvailable(): boolean;
+    hasPackages(): boolean;
+    allowEmptyWorkspace(): boolean;
+}
 // 修改时间:2026-09-08 22:45(事件 10 域化说明:onDidChange 携带新值 + 对称旧值 old*,差量消费方自算;all 弃用)

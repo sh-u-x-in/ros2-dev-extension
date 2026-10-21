@@ -347,13 +347,18 @@ export async function analyzeLaunchDocument(
  */
 export function registerLaunchDiagnostics(
     packages: PackageMap | undefined,
-    exec: LaunchExecSource | undefined
+    exec: LaunchExecSource | undefined,
+    /** P2 start 化:域是否已启动(未启动时分析/初始扫描一律跳过——门关零后台) */
+    isStarted?: () => boolean
 ): { disposables: vscode.Disposable[]; reanalyzeAll(): void } {
     const collection = vscode.languages.createDiagnosticCollection("launch");
     const timer: { t?: NodeJS.Timeout } = {};
     const skippedSchemes = new Set<string>();
 
     const analyzeOne = async (document: vscode.TextDocument): Promise<void> => {
+        if (isStarted && !isStarted()) {
+            return; // P2:域未启动(门关)不做分析
+        }
         if (document.languageId === "rosmsg" || document.languageId === "xacro") {
             return; // 邻域语言早退
         }
@@ -399,8 +404,10 @@ export function registerLaunchDiagnostics(
     const openListener = vscode.workspace.onDidOpenTextDocument(analyze);
     const closeListener = vscode.workspace.onDidCloseTextDocument(doc => collection.delete(doc.uri));
 
-    // 初始扫描
-    reanalyzeAll();
+    // 初始扫描(P2:仅域已启动;未启动由启动链的 reanalyzeAll 兜底)
+    if (!isStarted || isStarted()) {
+        reanalyzeAll();
+    }
 
     log.info("launch semantic diagnostics registered (format + parseability, warning squiggles)");
     return {
